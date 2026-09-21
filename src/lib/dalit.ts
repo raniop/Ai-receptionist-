@@ -104,6 +104,26 @@ export function detectNonTravel(text: string): "רכב" | "דירה" | "עסקי
   return null;
 }
 
+/**
+ * Detect a request to look up the caller's OWN policy in the CRM ("מה מצב הפוליסה
+ * שלי", "הביטוח שלי בתוקף?", "בדיקת פוליסה", "מספר פוליסה שלי"). This starts the
+ * OTP identity-verification flow — never a general policy-terms question, which the
+ * knowledge base answers.
+ */
+export function detectPolicyLookup(text: string): boolean {
+  const t = text.toLowerCase();
+  return (
+    hasAny(t, ["הפוליסה שלי", "פוליסה שלי", "הביטוח שלי", "הביטוח שרכשתי"]) ||
+    hasAny(t, ["מצב הפוליסה", "סטטוס הפוליסה", "בדיקת פוליסה", "לבדוק את הפוליסה", "לבדוק פוליסה", "פרטי הפוליסה"]) ||
+    hasAny(t, ["מתי מסתיים הביטוח", "מתי נגמר הביטוח", "עד מתי הביטוח", "הפוליסה בתוקף", "הביטוח בתוקף"])
+  );
+}
+
+/** Keep only the digits a caller spoke (id / phone / OTP come through as free text). */
+export function digitsOnly(text: string): string {
+  return (text.match(/\d/g) || []).join("");
+}
+
 /** A conversational answer from the site's own knowledge base, or null. */
 export function faqAnswer(text: string, kb: KbEntry[]): string | null {
   const entry = matchKb(text, kb);

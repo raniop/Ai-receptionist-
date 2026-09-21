@@ -11,6 +11,8 @@ import {
   deskContact,
   detectIntent,
   detectNonTravel,
+  detectPolicyLookup,
+  digitsOnly,
   faqAnswer,
   nextSlots,
   parseSlotChoice,
@@ -19,6 +21,7 @@ import {
   type CallState,
   type Slot,
 } from "@/lib/dalit";
+import { sendOtp, verifyOtp, getMyPolicy, type PolicyView } from "@/integrations/crm/client";
 
 type Line = { id: number; speaker: "caller" | "dalit" | "system"; text: string; time: string };
 
@@ -28,7 +31,28 @@ type Pending =
   | { kind: "appointment-slot"; slots: Slot[] }
   | { kind: "appointment-name"; slot: Slot }
   | { kind: "appointment-phone"; slot: Slot; name: string }
+  | { kind: "crm-id" }
+  | { kind: "crm-phone"; personId: string }
+  | { kind: "crm-code"; personId: string }
   | null;
+
+/** Read a verified customer's policy back in a spoken-friendly line. */
+function describePolicies(policies: PolicyView[]): string {
+  if (!policies.length) {
+    return "אימתתי אותך, אבל לא מצאתי פוליסה על השם הזה. אם לדעתך יש טעות, אשמח לרשום הודעה והצוות יבדוק.";
+  }
+  const p = policies[0];
+  const parts: string[] = [];
+  if (p.insuranceType) parts.push(`סוג הביטוח ${p.insuranceType}`);
+  if (p.policyNumber) parts.push(`מספר פוליסה ${p.policyNumber}`);
+  if (p.status) parts.push(`סטטוס ${p.status}`);
+  if (p.endDate) parts.push(`בתוקף עד ${p.endDate}`);
+  const head =
+    policies.length > 1
+      ? `מצאתי ${policies.length} פוליסות על שמך. הנה הראשונה: `
+      : "מצאתי את הפוליסה שלך. ";
+  return head + (parts.join(", ") || "הפרטים המלאים זמינים אצל הצוות") + ". יש עוד משהו שאוכל לעזור בו?";
+}
 
 type RecognitionLike = {
   lang: string;
@@ -531,8 +555,49 @@ export function VoiceDemo({
     }
   }
 
-  function routeCall(text: string) {
+  async function routeCall(text: string) {
     const pending = pendingRef.current;
+
+    if (pending?.kind === "crm-id") {
+      const personId = digitsOnly(text);
+      if (personId.length < 5) {
+        say("לא קלטתי תעודת זהות תקינה. אפשר לחזור על מספר תעודת הזהות?", beginListening);
+        return;
+      }
+      pendingRef.current = { kind: "crm-phone", personId };
+      say("תודה. מה מספר הטלפון הנייד הרשום בפוליסה?", beginListening);
+      return;
+    }
+    if (pending?.kind === "crm-phone") {
+      const phone = digitsOnly(text);
+      if (phone.length < 9) {
+        say("המספר לא נקלט במלואו. אפשר לחזור על מספר הטלפון?", beginListening);
+        return;
+      }
+      const sent = await sendOtp(pending.personId, phone);
+      if (!sent) {
+        pendingRef.current = null;
+        say("לא הצלחתי לשלוח קוד אימות כרגע. אפשר לנסות שוב מאוחר יותר או להשאיר הודעה.", beginListening);
+        return;
+      }
+      pendingRef.current = { kind: "crm-code", personId: pending.personId };
+      say("שלחתי קוד אימות לנייד שלך ב-SMS. מה הקוד שקיבלת?", beginListening);
+      return;
+    }
+    if (pending?.kind === "crm-code") {
+      const ok = await verifyOtp(pending.personId, digitsOnly(text));
+      if (!ok) {
+        say("הקוד לא תואם. אפשר לנסות שוב — מה הקוד שקיבלת ב-SMS?", beginListening);
+        return;
+      }
+      pendingRef.current = null;
+      try {
+        say(describePolicies(await getMyPolicy()), beginListening);
+      } catch {
+        say("אימתתי אותך, אבל לא הצלחתי לשלוף את פרטי הפוליסה כרגע. אפשר לנסות שוב מאוחר יותר.", beginListening);
+      }
+      return;
+    }
 
     if (pending?.kind === "quote-name") {
       pendingRef.current = { kind: "quote-phone", name: text, topic: pending.topic };
@@ -574,6 +639,16 @@ export function VoiceDemo({
     if (/(message|take a message|call back|callback|call me|הודעה|להשאיר הודעה|לחזור אליי|התקשרו אליי)/i.test(text)) {
       pendingRef.current = { kind: "quote-name" };
       say("בוודאי. איך קוראים לך?", beginListening);
+      return;
+    }
+
+    // Customer wants their OWN policy details → OTP identity verification first.
+    if (detectPolicyLookup(text)) {
+      pendingRef.current = { kind: "crm-id" };
+      say(
+        "בשמחה. כדי לשמור על הפרטיות שלך אני צריכה קודם לאמת את זהותך. מה מספר תעודת הזהות שלך?",
+        beginListening,
+      );
       return;
     }
 

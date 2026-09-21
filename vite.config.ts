@@ -22,4 +22,16 @@ export default defineConfig({
     tailwindcss(),
   ],
   resolve: { alias: { "@": path.resolve(__dirname, "./src") } },
+  // In dev, the browser calls /api/crm/* and Vite forwards it to the local CRM
+  // proxy (server/crm-proxy.mjs, `pnpm proxy`). The CRM credentials stay in the
+  // proxy — the browser never sees them. In production, put the proxy behind the
+  // same origin (or set VITE_CRM_BASE_URL) so /api/crm resolves there too.
+  server: {
+    proxy: {
+      "/api/crm": {
+        target: `http://localhost:${process.env.CRM_PROXY_PORT || 5055}`,
+        changeOrigin: true,
+      },
+    },
+  },
 });
