@@ -95,25 +95,39 @@ function verifySession(token) {
   }
 }
 
-// ── policy sanitization: return only what a customer should hear read back ────
-function sanitizePolicy(raw) {
+// ── lookup sanitization ──────────────────────────────────────────────────────
+// GetByPersonId returns the PERSON (identity) with their policies nested under
+// `riders`. We read back the person's name to confirm identity, plus a slim view
+// of each policy — never the raw record.
+const pick = (o, keys) => {
+  for (const k of keys) {
+    const hit = Object.keys(o).find((kk) => kk.toLowerCase() === k.toLowerCase());
+    if (hit != null && o[hit] != null && o[hit] !== "") return o[hit];
+  }
+  return null;
+};
+
+function isActive(endDate) {
+  const t = Date.parse(endDate);
+  return Number.isNaN(t) ? null : t >= Date.now();
+}
+
+function sanitizeLookup(raw) {
   const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
-  const pick = (o, keys) => {
-    for (const k of keys) {
-      const hit = Object.keys(o).find((kk) => kk.toLowerCase() === k.toLowerCase());
-      if (hit != null && o[hit] != null && o[hit] !== "") return o[hit];
-    }
-    return null;
-  };
-  return list.map((o) => ({
-    policyNumber: pick(o, ["policyNumber", "policyNo", "policyIndex", "polisaNumber", "mspolisa", "id"]),
-    status: pick(o, ["status", "statusName", "polisaStatus", "matzav"]),
-    insuranceType: pick(o, ["insuranceType", "productName", "product", "sugBituh", "type"]),
-    startDate: pick(o, ["startDate", "fromDate", "startdate", "dateFrom", "tarichHatchala"]),
-    endDate: pick(o, ["endDate", "toDate", "enddate", "dateTo", "tarichSium"]),
-    premium: pick(o, ["premium", "totalPremium", "price", "amount", "premia"]),
-    fullName: pick(o, ["fullName", "customerName", "name", "shem"]),
-  }));
+  const customerName = list[0] ? pick(list[0], ["clientName"]) : null;
+  const policies = list.map((p) => {
+    const endDate = pick(p, ["endDate"]);
+    return {
+      policyNumber: pick(p, ["fullPolicyID", "policyDoc", "policyIndex"]),
+      insuranceType: pick(p, ["areaName"]),
+      startDate: pick(p, ["startDate"]),
+      endDate,
+      premium: pick(p, ["total"]),
+      agentName: pick(p, ["agentName"]),
+      active: isActive(endDate),
+    };
+  });
+  return { customerName, count: policies.length, policies };
 }
 
 // ── http plumbing ────────────────────────────────────────────────────────────
@@ -178,10 +192,10 @@ const server = http.createServer(async (req, res) => {
       const auth = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
       const session = verifySession(auth);
       if (!session) return send(res, 401, { error: "session_invalid_or_expired" });
-      const r = await crmFetch(`/api/Policy/GetByPersonId?personId=${encodeURIComponent(session.personId)}`);
+      const r = await crmFetch(`/api/Policy/GetById?id=${encodeURIComponent(session.personId)}`);
       if (!r.ok) return send(res, 502, { error: "policy_lookup_failed" });
       const raw = await r.json();
-      return send(res, 200, { policies: sanitizePolicy(raw) });
+      return send(res, 200, sanitizeLookup(raw));
     }
 
     if (url.pathname === "/api/crm/health") return send(res, 200, { ok: true });

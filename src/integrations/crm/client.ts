@@ -8,13 +8,15 @@ const BASE = import.meta.env.VITE_CRM_BASE_URL || ""; // same-origin by default 
 
 export type PolicyView = {
   policyNumber: string | null;
-  status: string | null;
   insuranceType: string | null;
   startDate: string | null;
   endDate: string | null;
   premium: string | number | null;
-  fullName: string | null;
+  agentName: string | null;
+  active: boolean | null;
 };
+
+export type LookupResult = { customerName: string | null; count: number; policies: PolicyView[] };
 
 let sessionToken: string | null = null;
 
@@ -50,8 +52,8 @@ export async function verifyOtp(personId: string, code: string): Promise<boolean
   }
 }
 
-/** Step 3 — read the verified customer's own policy. Requires a live session. */
-export async function getMyPolicy(): Promise<PolicyView[]> {
+/** Step 3 — read the verified customer's own policies. Requires a live session. */
+export async function getMyPolicy(): Promise<LookupResult> {
   if (!sessionToken) throw new Error("not_verified");
   const r = await fetch(`${BASE}/api/crm/policy`, {
     headers: { authorization: `Bearer ${sessionToken}` },
@@ -60,8 +62,8 @@ export async function getMyPolicy(): Promise<PolicyView[]> {
     if (r.status === 401) sessionToken = null;
     throw new Error("policy_lookup_failed");
   }
-  const j = (await r.json()) as { policies: PolicyView[] };
-  return j.policies ?? [];
+  const j = (await r.json()) as LookupResult;
+  return { customerName: j.customerName ?? null, count: j.count ?? 0, policies: j.policies ?? [] };
 }
 
 /** Forget the current verified session (call when a lookup conversation ends). */

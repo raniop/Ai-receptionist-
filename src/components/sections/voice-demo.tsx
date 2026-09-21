@@ -21,7 +21,7 @@ import {
   type CallState,
   type Slot,
 } from "@/lib/dalit";
-import { sendOtp, verifyOtp, getMyPolicy, type PolicyView } from "@/integrations/crm/client";
+import { sendOtp, verifyOtp, getMyPolicy, type LookupResult } from "@/integrations/crm/client";
 
 type Line = { id: number; speaker: "caller" | "dalit" | "system"; text: string; time: string };
 
@@ -36,22 +36,34 @@ type Pending =
   | { kind: "crm-code"; personId: string }
   | null;
 
-/** Read a verified customer's policy back in a spoken-friendly line. */
-function describePolicies(policies: PolicyView[]): string {
-  if (!policies.length) {
-    return "אימתתי אותך, אבל לא מצאתי פוליסה על השם הזה. אם לדעתך יש טעות, אשמח לרשום הודעה והצוות יבדוק.";
+/** Format an ISO-ish date to a spoken-friendly DD/MM/YYYY, or "" when unparseable. */
+function fmtDate(v: string | null): string {
+  if (!v) return "";
+  const t = Date.parse(v);
+  if (Number.isNaN(t)) return String(v).slice(0, 10);
+  const d = new Date(t);
+  return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
+}
+
+/** Read a verified customer's policies back in a spoken-friendly line. */
+function describePolicies(r: LookupResult): string {
+  const who = r.customerName ? `, ${r.customerName}` : "";
+  if (!r.policies.length) {
+    return `אימתתי אותך${who}. לא מצאתי פוליסות על שמך במערכת. אם לדעתך יש טעות, אשמח לרשום הודעה והצוות יבדוק.`;
   }
-  const p = policies[0];
+  // Prefer an in-force policy, and the most recent one.
+  const sorted = [...r.policies].sort((a, b) => (Date.parse(b.startDate || "") || 0) - (Date.parse(a.startDate || "") || 0));
+  const p = sorted.find((x) => x.active !== false) ?? sorted[0];
   const parts: string[] = [];
-  if (p.insuranceType) parts.push(`סוג הביטוח ${p.insuranceType}`);
+  if (p.insuranceType) parts.push(`ענף ${p.insuranceType}`);
   if (p.policyNumber) parts.push(`מספר פוליסה ${p.policyNumber}`);
-  if (p.status) parts.push(`סטטוס ${p.status}`);
-  if (p.endDate) parts.push(`בתוקף עד ${p.endDate}`);
+  if (p.endDate) parts.push(`בתוקף עד ${fmtDate(p.endDate)}${p.active === false ? " (פג תוקף)" : ""}`);
+  const count = r.count || r.policies.length;
   const head =
-    policies.length > 1
-      ? `מצאתי ${policies.length} פוליסות על שמך. הנה הראשונה: `
-      : "מצאתי את הפוליסה שלך. ";
-  return head + (parts.join(", ") || "הפרטים המלאים זמינים אצל הצוות") + ". יש עוד משהו שאוכל לעזור בו?";
+    count > 1
+      ? `מצאתי ${count} פוליסות על שמך${who}. הפוליסה העדכנית ביותר: `
+      : `מצאתי את הפוליסה שלך${who}. `;
+  return head + (parts.join(", ") || "הפרטים המלאים זמינים אצל הצוות") + ". רוצים שאעביר אתכם לנציג לפרטים נוספים, או שיש עוד משהו?";
 }
 
 type RecognitionLike = {
