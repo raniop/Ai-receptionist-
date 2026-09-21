@@ -28,13 +28,16 @@ async function post(path: string, body: unknown): Promise<Response> {
   });
 }
 
-/** Step 1 — ask the CRM to text an OTP to the customer's phone. Never throws. */
-export async function sendOtp(personId: string, phone: string): Promise<boolean> {
+/** Step 1 — the proxy looks up the phone on file by ID and texts the OTP there.
+ *  Returns a masked hint (last 4 digits) for the spoken confirmation. Never throws. */
+export async function sendOtp(personId: string): Promise<{ ok: boolean; phoneHint?: string }> {
   try {
-    const r = await post("/api/crm/otp/send", { personId, phone });
-    return r.ok;
+    const r = await post("/api/crm/otp/send", { personId });
+    if (!r.ok) return { ok: false };
+    const j = (await r.json().catch(() => ({}))) as { phoneHint?: string };
+    return { ok: true, phoneHint: j.phoneHint };
   } catch {
-    return false;
+    return { ok: false };
   }
 }
 

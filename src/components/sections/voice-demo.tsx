@@ -32,7 +32,6 @@ type Pending =
   | { kind: "appointment-name"; slot: Slot }
   | { kind: "appointment-phone"; slot: Slot; name: string }
   | { kind: "crm-id" }
-  | { kind: "crm-phone"; personId: string }
   | { kind: "crm-code"; personId: string }
   | null;
 
@@ -576,24 +575,18 @@ export function VoiceDemo({
         say("לא קלטתי תעודת זהות תקינה. אפשר לחזור על מספר תעודת הזהות?", beginListening);
         return;
       }
-      pendingRef.current = { kind: "crm-phone", personId };
-      say("תודה. מה מספר הטלפון הנייד הרשום בפוליסה?", beginListening);
-      return;
-    }
-    if (pending?.kind === "crm-phone") {
-      const phone = digitsOnly(text);
-      if (phone.length < 9) {
-        say("המספר לא נקלט במלואו. אפשר לחזור על מספר הטלפון?", beginListening);
-        return;
-      }
-      const sent = await sendOtp(pending.personId, phone);
-      if (!sent) {
+      const res = await sendOtp(personId);
+      if (!res.ok) {
         pendingRef.current = null;
-        say("לא הצלחתי לשלוח קוד אימות כרגע. אפשר לנסות שוב מאוחר יותר או להשאיר הודעה.", beginListening);
+        say(
+          "לא הצלחתי לשלוח קוד. ייתכן שאין טלפון רשום על תעודת הזהות הזו, או שיש טעות במספר. אפשר לנסות שוב או להשאיר הודעה והצוות יחזור.",
+          beginListening,
+        );
         return;
       }
-      pendingRef.current = { kind: "crm-code", personId: pending.personId };
-      say("שלחתי קוד אימות לנייד שלך ב-SMS. מה הקוד שקיבלת?", beginListening);
+      pendingRef.current = { kind: "crm-code", personId };
+      const hint = res.phoneHint ? ` לנייד שמסתיים בספרות ${res.phoneHint.split("").join(" ")}` : "";
+      say(`תודה. שלחתי קוד אימות ב-SMS${hint}. מה הקוד שקיבלת?`, beginListening);
       return;
     }
     if (pending?.kind === "crm-code") {

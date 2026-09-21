@@ -107,6 +107,20 @@ const pick = (o, keys) => {
   return null;
 };
 
+/** Last 4 digits, for a spoken hint like "…4244" — never the full number. */
+function maskPhone(p) {
+  const d = String(p).replace(/\D/g, "");
+  return d.length >= 4 ? d.slice(-4) : "";
+}
+
+/** Normalize a stored phone to a plain local IL mobile (05XXXXXXXX). */
+function normalizePhone(p) {
+  let d = String(p).replace(/\D/g, "");
+  if (d.startsWith("972")) d = "0" + d.slice(3);
+  if (d.length === 9 && d.startsWith("5")) d = "0" + d; // "52…" → "052…"
+  return d;
+}
+
 function isActive(endDate) {
   const t = Date.parse(endDate);
   return Number.isNaN(t) ? null : t >= Date.now();
@@ -161,17 +175,33 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return send(res, 204, {});
 
   try {
-    // 1) send OTP to the customer's phone
+    // 1) send OTP — the caller gives ONLY their ID; we look up the phone on file and
+    //    text the code there. The caller can never redirect the OTP to another number.
     if (req.method === "POST" && url.pathname === "/api/crm/otp/send") {
-      const { personId, phone } = await readJson(req);
-      if (!personId || !phone) return send(res, 400, { error: "personId and phone are required" });
+      const { personId } = await readJson(req);
+      if (!personId) return send(res, 400, { error: "personId is required" });
+      // Resolve the registered mobile by ID.
+      const pr = await crmFetch(`/api/Policy/GetByPersonId?personId=${encodeURIComponent(String(personId))}`);
+      if (!pr.ok) return send(res, 502, { error: "lookup_failed" });
+      const rec = await pr.json().catch(() => null);
+      const person = Array.isArray(rec) ? rec[0] : rec;
+      const raw = person ? pick(person, ["mobile", "phone"]) : null;
+      if (!raw) return send(res, 404, { error: "no_phone_on_file" });
+      const phone = normalizePhone(raw);
       const r = await crmFetch("/api/Auth/sendotp", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ personId: String(personId), phoneNumber: String(phone) }),
+        body: JSON.stringify({ personId: String(personId), phoneNumber: phone }),
       });
-      if (!r.ok) return send(res, 502, { error: "otp_send_failed" });
-      return send(res, 200, { ok: true });
+      if (!r.ok) {
+        const detail = await r.text().catch(() => "");
+        console.error("[crm-proxy] sendotp failed:", r.status, detail.slice(0, 200));
+        return send(res, 502, {
+          error: "otp_send_failed",
+          ...(process.env.CRM_DEBUG_FIELDS === "1" ? { crmStatus: r.status, crmBody: detail.slice(0, 200), triedPhone: phone } : {}),
+        });
+      }
+      return send(res, 200, { ok: true, phoneHint: maskPhone(phone) });
     }
 
     // 2) verify OTP → mint a session scoped to this personId
