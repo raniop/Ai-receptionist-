@@ -17,3 +17,8 @@ scripts/
 .env
 .env.*
 .DS_Store
+
+# npm lockfile — this project uses pnpm (pnpm-lock.yaml)
+package-lock.json
+# Local editor/agent tooling
+.claude/

@@ -757,7 +757,6 @@ export function VoiceDemo({
                 type="button"
                 className="h-12 rounded-full px-6"
                 onClick={startCall}
-                disabled={callState === "ringing" || callState === "greeting"}
               >
                 <PhoneCall className="h-4 w-4" />
                 {callState === "ended" ? "התחלת שיחה חדשה" : "התחל שיחה"}

@@ -1,63 +1,102 @@
-// Neon Data API client — a tiny raw-`fetch` PostgREST wrapper. NO SDK, NO Supabase
-// package, NO beta deps. The Data API (PostgREST) needs a JWT on EVERY request, so
-// this client always attaches one: the logged-in user's JWT when signed in (RLS sees
-// `auth.user_id()`), otherwise a short-lived ANONYMOUS JWT minted by Neon Auth at
-// `{VITE_NEON_AUTH_URL}/token/anonymous` (RLS role `anonymous`, public reads only).
+// Local data layer — a drop-in replacement for the old Neon Data API client.
 //
-// Vincen provisioning injects VITE_NEON_DATA_API_URL + VITE_NEON_AUTH_URL at build.
-// Usage (supabase-shaped, on purpose — minimal mental shift):
-//   import { db } from "@/integrations/neon/client";
-//   const { data, error } = await db.from("posts").select("id,title").order("created_at", { ascending: false });
-//   const { data, error } = await db.from("items").insert({ title }).select().single();
-//   await db.from("items").update({ done: true }).eq("id", id);
-//   await db.from("items").delete().eq("id", id);
-import { getAccessToken } from "./auth";
+// We dropped Vincen/Neon and now run fully self-contained: no backend, no env vars,
+// no network. Reads for `knowledge_base` and `site_info` come from the bundled seed
+// (src/data/seed.ts); `leads` and `appointments` are read/written to localStorage so
+// submissions actually persist in the browser. `booked_slots` is a derived view over
+// appointments. The public surface is unchanged — `db.from("table").select()/.insert()
+// /.update()/.eq()/.order()…` and an awaitable `{ data, error }` — so every consumer
+// keeps working untouched.
+import { knowledgeBaseSeed, siteInfoSeed } from "@/data/seed";
 
-const DATA_API_URL: string = import.meta.env.VITE_NEON_DATA_API_URL;
-const AUTH_URL: string = import.meta.env.VITE_NEON_AUTH_URL;
-
-// Both are injected by Vincen provisioning at build time. During the agent's preview
-// (before the real backend is wired) they're absent — we DON'T throw at import (that
-// would white-screen the preview); instead queries resolve to a clean error so the
-// UI shows its loading/empty/error state. The shipped build always has both set.
-const configured = Boolean(DATA_API_URL && AUTH_URL);
-
-// ── anonymous token (login-free public reads) ──────────────────────────────
-// Cached until ~30s before expiry; refetched transparently on the next query.
-let anon: { token: string; expMs: number } | null = null;
-async function anonToken(): Promise<string> {
-  if (anon && anon.expMs - 30_000 > Date.now()) return anon.token;
-  const res = await fetch(`${AUTH_URL}/token/anonymous`, { headers: { accept: "application/json" } });
-  if (!res.ok) throw new Error(`Neon anonymous token failed: ${res.status}`);
-  const j = (await res.json()) as { token: string; expires_at?: number };
-  anon = { token: j.token, expMs: (j.expires_at ?? 0) * 1000 || Date.now() + 50 * 60_000 };
-  return j.token;
-}
-
-/** The JWT to send to the Data API: user's session JWT if signed in, else anonymous. */
-export async function dataApiToken(): Promise<string> {
-  return (await getAccessToken()) ?? (await anonToken());
-}
-
-const enc = encodeURIComponent;
 export type Result<T> = { data: T | null; error: { message: string; code?: string } | null };
-type Method = "GET" | "POST" | "PATCH" | "DELETE";
 
-// Chainable PostgREST query. `await` it to run (implements PromiseLike).
+// ── storage ────────────────────────────────────────────────────────────────
+const PREFIX = "ophir:db:";
+type Row = Record<string, any>;
+
+/** Tables that live in localStorage (everything the visitor creates). */
+const PERSISTED = new Set(["leads", "appointments"]);
+
+function load(table: string): Row[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(PREFIX + table);
+    return raw ? (JSON.parse(raw) as Row[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function save(table: string, rows: Row[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(PREFIX + table, JSON.stringify(rows));
+  } catch {
+    /* ignore quota / private-mode failures */
+  }
+}
+
+function uuid(): string {
+  try {
+    if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  } catch {
+    /* fall through */
+  }
+  return "id-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+}
+
+/** Read-only source rows for a table (seed, derived views, or the persisted store). */
+function sourceRows(table: string): Row[] {
+  switch (table) {
+    case "knowledge_base":
+      return knowledgeBaseSeed.map((r) => ({ ...r }));
+    case "site_info":
+      return siteInfoSeed.map((r) => ({ ...r }));
+    case "booked_slots":
+      // Derived: the taken slots per date (cancelled appointments free their slot up).
+      return load("appointments")
+        .filter((a) => a.status !== "Cancelled")
+        .map((a) => ({ appointment_date: a.appointment_date, time_slot: a.time_slot }));
+    case "leads":
+    case "appointments":
+      return load(table);
+    default:
+      // Unknown tables (template leftovers: items/posts/assets) resolve to empty.
+      return [];
+  }
+}
+
+/** Defaults stamped onto a freshly inserted row so the admin panels have what they read. */
+function withInsertDefaults(table: string, row: Row): Row {
+  const base: Row = {
+    id: row.id ?? uuid(),
+    created_at: row.created_at ?? new Date().toISOString(),
+    ...row,
+  };
+  if (table === "leads" && base.status == null) base.status = "New";
+  if (table === "appointments" && base.status == null) base.status = "Pending";
+  if (base.notes === undefined) base.notes = null;
+  return base;
+}
+
+type Filter = { col: string; op: string; val: unknown };
+
+// Chainable query with the same shape the old PostgREST client exposed. `await` runs it.
 class Query<T = any> implements PromiseLike<Result<T>> {
-  private _filters: string[] = [];
-  private _select = "*";
-  private _order?: string;
+  private _filters: Filter[] = [];
+  private _order?: { col: string; ascending: boolean };
   private _limit?: number;
   private _single = false;
-  private _method: Method = "GET";
-  private _body?: unknown;
-  private _prefer: string[] = [];
+  private _method: "GET" | "INSERT" | "UPDATE" | "DELETE" = "GET";
+  private _body?: Row | Row[];
 
   constructor(private table: string) {}
 
-  // ── filters ──
-  private f(col: string, op: string, val: unknown) { this._filters.push(`${col}=${op}.${enc(String(val))}`); return this; }
+  private f(col: string, op: string, val: unknown) {
+    this._filters.push({ col, op, val });
+    return this;
+  }
   eq(col: string, val: unknown) { return this.f(col, "eq", val); }
   neq(col: string, val: unknown) { return this.f(col, "neq", val); }
   gt(col: string, val: unknown) { return this.f(col, "gt", val); }
@@ -66,50 +105,89 @@ class Query<T = any> implements PromiseLike<Result<T>> {
   lte(col: string, val: unknown) { return this.f(col, "lte", val); }
   like(col: string, val: string) { return this.f(col, "like", val); }
   ilike(col: string, val: string) { return this.f(col, "ilike", val); }
-  is(col: string, val: "null" | "true" | "false") { this._filters.push(`${col}=is.${val}`); return this; }
-  in(col: string, vals: unknown[]) { this._filters.push(`${col}=in.(${vals.map((v) => enc(String(v))).join(",")})`); return this; }
+  is(col: string, val: "null" | "true" | "false") { return this.f(col, "is", val); }
+  in(col: string, vals: unknown[]) { return this.f(col, "in", vals); }
 
-  // ── shaping ──
-  select(cols = "*") { this._select = cols; if (this._method !== "GET") this._prefer.push("return=representation"); return this; }
-  order(col: string, opts?: { ascending?: boolean }) { this._order = `${col}.${opts?.ascending === false ? "desc" : "asc"}`; return this; }
+  select(_cols = "*") { return this; } // projection is a no-op; extra fields are harmless
+  order(col: string, opts?: { ascending?: boolean }) {
+    this._order = { col, ascending: opts?.ascending !== false };
+    return this;
+  }
   limit(n: number) { this._limit = n; return this; }
   single() { this._single = true; return this; }
 
-  // ── mutations ──
-  insert(values: unknown) { this._method = "POST"; this._body = values; return this; }
-  update(values: unknown) { this._method = "PATCH"; this._body = values; return this; }
-  upsert(values: unknown) { this._method = "POST"; this._body = values; this._prefer.push("resolution=merge-duplicates"); return this; }
+  insert(values: Row | Row[]) { this._method = "INSERT"; this._body = values; return this; }
+  update(values: Row) { this._method = "UPDATE"; this._body = values; return this; }
+  upsert(values: Row | Row[]) { this._method = "INSERT"; this._body = values; return this; }
   delete() { this._method = "DELETE"; return this; }
 
-  private buildUrl(): string {
-    const parts: string[] = [];
-    const wantsRows = this._method === "GET" || this._prefer.includes("return=representation");
-    if (wantsRows && this._select) parts.push(`select=${this._select.split(",").map((c) => enc(c.trim())).join(",")}`);
-    parts.push(...this._filters);
-    if (this._order) parts.push(`order=${this._order}`);
-    if (this._limit != null) parts.push(`limit=${this._limit}`);
-    return `${DATA_API_URL}/${this.table}${parts.length ? `?${parts.join("&")}` : ""}`;
+  private matches(row: Row): boolean {
+    return this._filters.every(({ col, op, val }) => {
+      const cell = row[col];
+      switch (op) {
+        case "eq": return cell === val || String(cell) === String(val);
+        case "neq": return String(cell) !== String(val);
+        case "gt": return cell > (val as any);
+        case "gte": return cell >= (val as any);
+        case "lt": return cell < (val as any);
+        case "lte": return cell <= (val as any);
+        case "like":
+        case "ilike": {
+          const rx = new RegExp("^" + String(val).replace(/%/g, ".*") + "$", op === "ilike" ? "i" : "");
+          return rx.test(String(cell ?? ""));
+        }
+        case "is": return val === "null" ? cell == null : String(cell) === val;
+        case "in": return (val as unknown[]).map(String).includes(String(cell));
+        default: return true;
+      }
+    });
   }
 
-  private async exec(): Promise<Result<T>> {
-    if (!configured) return { data: null, error: { message: "Backend not configured yet (preview)." } };
+  private run(): Result<T> {
     try {
-      const token = await dataApiToken();
-      const headers: Record<string, string> = {
-        authorization: `Bearer ${token}`,
-        accept: this._single ? "application/vnd.pgrst.object+json" : "application/json",
-      };
-      if (this._body !== undefined) headers["content-type"] = "application/json";
-      if (this._prefer.length) headers["prefer"] = [...new Set(this._prefer)].join(",");
-      const res = await fetch(this.buildUrl(), {
-        method: this._method,
-        headers,
-        body: this._body !== undefined ? JSON.stringify(this._body) : undefined,
-      });
-      const text = await res.text();
-      const json = text ? JSON.parse(text) : null;
-      if (!res.ok) return { data: null, error: { message: json?.message || res.statusText, code: json?.code } };
-      return { data: (json as T) ?? null, error: null };
+      // ── writes ──
+      if (this._method === "INSERT") {
+        if (!PERSISTED.has(this.table)) {
+          // Unknown/read-only table: accept silently so callers don't error.
+          return { data: null, error: null };
+        }
+        const incoming = Array.isArray(this._body) ? this._body : [this._body as Row];
+        const created = incoming.map((r) => withInsertDefaults(this.table, r));
+        save(this.table, [...load(this.table), ...created]);
+        const out = this._single ? created[0] : created;
+        return { data: out as T, error: null };
+      }
+      if (this._method === "UPDATE") {
+        if (!PERSISTED.has(this.table)) return { data: null, error: null };
+        const rows = load(this.table);
+        const patch = this._body as Row;
+        const next = rows.map((r) => (this.matches(r) ? { ...r, ...patch } : r));
+        save(this.table, next);
+        return { data: null, error: null };
+      }
+      if (this._method === "DELETE") {
+        if (!PERSISTED.has(this.table)) return { data: null, error: null };
+        save(this.table, load(this.table).filter((r) => !this.matches(r)));
+        return { data: null, error: null };
+      }
+
+      // ── reads ──
+      let rows = sourceRows(this.table).filter((r) => this.matches(r));
+      if (this._order) {
+        const { col, ascending } = this._order;
+        rows = [...rows].sort((a, b) => {
+          const av = a[col];
+          const bv = b[col];
+          if (av === bv) return 0;
+          const cmp = av > bv ? 1 : -1;
+          return ascending ? cmp : -cmp;
+        });
+      }
+      if (this._limit != null) rows = rows.slice(0, this._limit);
+      if (this._single) {
+        return { data: (rows[0] ?? null) as T, error: rows[0] ? null : { message: "No rows found" } };
+      }
+      return { data: rows as T, error: null };
     } catch (e: any) {
       return { data: null, error: { message: String(e?.message ?? e) } };
     }
@@ -119,11 +197,11 @@ class Query<T = any> implements PromiseLike<Result<T>> {
     onfulfilled?: ((v: Result<T>) => R1 | PromiseLike<R1>) | null,
     onrejected?: ((reason: unknown) => R2 | PromiseLike<R2>) | null,
   ): PromiseLike<R1 | R2> {
-    return this.exec().then(onfulfilled, onrejected);
+    return Promise.resolve(this.run()).then(onfulfilled, onrejected);
   }
 }
 
 export const db = {
-  /** Start a query against a table/view, e.g. `db.from("posts")`. */
+  /** Start a query against a table/view, e.g. `db.from("leads")`. */
   from<T = any>(table: string) { return new Query<T>(table); },
 };

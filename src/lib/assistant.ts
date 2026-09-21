@@ -34,40 +34,81 @@ export function tokenize(input: string): string[] {
     .filter((w) => w.length > 1 && !STOP.has(w));
 }
 
-/** Best knowledge-base match for a message, or null when nothing scores high enough. */
+// Words a caller is likely to use → the vocabulary the knowledge base actually uses,
+// so "ביטוח דירה" finds the "בית" entries, "מכונית" finds "רכב", etc. Keyed on a
+// substring of the message (prefix-agnostic), each mapping to KB tokens.
+const SYNONYMS: Record<string, string[]> = {
+  דירה: ["בית", "נכס"],
+  דירת: ["בית", "נכס"],
+  מכונית: ["רכב"],
+  אוטו: ["רכב"],
+  רפואי: ["בריאות"],
+  רפואה: ["בריאות"],
+  רפואית: ["בריאות"],
+  שיניים: ["בריאות"],
+  חברה: ["עסקים", "עסק"],
+  עסקי: ["עסקים", "עסק"],
+  עסק: ["עסקים"],
+  חנות: ["עסקים"],
+  פנסיה: ["חיים"],
+  מוות: ["חיים"],
+  נפטר: ["חיים"],
+  אקסטרים: ["ספורט", "אתגרי"],
+  צלילה: ["ספורט", "אתגרי"],
+  טיפוס: ["ספורט", "אתגרי"],
+  תכולה: ["בית", "רכוש"],
+};
+
+/**
+ * Best knowledge-base match for a message, or null when nothing scores high enough.
+ *
+ * Scoring favours DISTINCTIVE words over ubiquitous ones: a keyword found in many
+ * entries (e.g. "כיסוי", "ביטוח") is a weak signal, while a rare one (e.g. "בית",
+ * "תכולה") strongly identifies the subject — classic IDF weighting. The entry's
+ * `topic` is counted twice, since the subject the caller named matters most, and the
+ * query is expanded with SYNONYMS first.
+ */
 export function matchKb(message: string, kb: KbEntry[]): KbEntry | null {
-  const tokens = tokenize(message);
-  if (tokens.length === 0) return null;
+  if (kb.length === 0) return null;
   const lower = ` ${message.toLowerCase()} `;
+  const queryTokens = new Set(tokenize(message));
+  for (const [key, syns] of Object.entries(SYNONYMS)) {
+    if (lower.includes(key)) for (const s of syns) queryTokens.add(s);
+  }
+  if (queryTokens.size === 0) return null;
+
+  // Document frequency of every keyword/topic token across the KB → rarity = weight.
+  const df = new Map<string, number>();
+  const entryTokens = kb.map((entry) => {
+    const set = new Set<string>();
+    for (const kw of entry.keywords ?? []) for (const t of tokenize(kw)) set.add(t);
+    for (const t of tokenize(entry.topic)) set.add(t);
+    for (const t of set) df.set(t, (df.get(t) ?? 0) + 1);
+    return set;
+  });
+  const N = kb.length;
+  const idf = (t: string) => Math.log((N + 1) / ((df.get(t) ?? 0) + 1)) + 0.3;
+
+  // A token hits if the query has it, or (Hebrew, ≥3 chars) appears as a substring —
+  // catching prefixed forms like "הבית" / "לרכב" that exact tokenisation would miss.
+  const hits = (t: string) =>
+    queryTokens.has(t) || (t.length >= 3 && /[֐-׿]/.test(t) && lower.includes(t));
 
   let best: KbEntry | null = null;
   let bestScore = 0;
-
-  for (const entry of kb) {
+  kb.forEach((entry, i) => {
     let score = 0;
-    for (const kw of entry.keywords ?? []) {
-      const k = kw.toLowerCase();
-      if (lower.includes(` ${k} `) || lower.includes(`${k}s `) || lower.includes(` ${k}`)) {
-        score += 2;
-      }
-      // Hebrew words take prefixes (ה/ו/ב/ל/מ/ש), so also match the keyword as a
-      // plain substring — "כתובת" should match "הכתובת".
-      if (/[\u0590-\u05FF]/.test(k) && lower.includes(k)) {
-        score += 1;
-      }
-      for (const kt of tokenize(k)) {
-        if (tokens.includes(kt)) score += 1;
-      }
-    }
-    const qTokens = new Set(tokenize(entry.question));
-    for (const t of tokens) if (qTokens.has(t)) score += 1;
+    for (const t of entryTokens[i]) if (hits(t)) score += idf(t);
+    for (const t of tokenize(entry.topic)) if (hits(t)) score += idf(t); // topic weighted double
+    const qWords = new Set(tokenize(entry.question));
+    for (const t of queryTokens) if (qWords.has(t)) score += 0.4;
     if (score > bestScore) {
       bestScore = score;
       best = entry;
     }
-  }
+  });
 
-  return bestScore >= 3 ? best : null;
+  return bestScore >= 1.6 ? best : null;
 }
 
 function actions(ctx: AssistantContext, opts: { quote?: boolean; book?: boolean } = {}): AssistantAction[] {
