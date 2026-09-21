@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Mic, PhoneCall, PhoneOff, RotateCcw, Send, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { dalitCopy, voiceCta } from "@/content/site";
+import { dalitCopy, mainPhone, secretariat, voiceCta } from "@/content/site";
 import { getOfficeStatus } from "@/lib/business-hours";
+import { buildReply } from "@/lib/assistant";
 import { db } from "@/integrations/neon/client";
 import { useKnowledgeBase } from "@/hooks/use-site-data";
 import {
@@ -596,10 +597,14 @@ export function VoiceDemo({
       say(answer, beginListening);
       return;
     }
-    say(
-      "אני יכולה לרשום לך הודעה, או להעביר אותך לנציג. מה תעדיף?",
-      beginListening,
-    );
+    // Fall back to Dalit's built-in knowledge (hours, prices, claims, coverage…)
+    // so she answers common questions even when the live knowledge base is empty.
+    const reply = buildReply(text, kbRef.current, {
+      status,
+      phone: mainPhone,
+      email: secretariat.email,
+    });
+    say(reply.text, beginListening);
   }
 
   function transferCall(text: string) {
