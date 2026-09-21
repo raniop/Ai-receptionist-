@@ -69,22 +69,39 @@ export function detectIntent(text: string): Intent {
   return "faq";
 }
 
-/** Choose the desk that best matches what the caller said. */
+/** Choose the desk that best matches what the caller said. Travel is the core, so
+ *  policy/coverage/claims questions escalate to the travel desk; sales to the sales
+ *  manager; everything else to the secretariat. */
 export function pickDesk(text: string): StaffDesk {
   const t = text.toLowerCase();
-  if (hasAny(t, ["רכב", "רכב חובה", "auto", "car", "vehicle"])) {
-    return staffDirectory.find((d) => d.department === "רכב") ?? staffDirectory[0];
+  if (hasAny(t, ["נסיע", "חו", "פוליס", "כיסוי", "תביע", "הראל", "דרכון"])) {
+    return staffDirectory.find((d) => d.department === "נסיעות") ?? staffDirectory[0];
   }
-  if (hasAny(t, ["דירה", "בית", "home", "property"])) {
-    return staffDirectory.find((d) => d.department === "דירה") ?? staffDirectory[0];
-  }
-  if (hasAny(t, ["מכירות", "הצעת מחיר", "מחיר", "quote", "sales", "price"])) {
+  if (hasAny(t, ["מכיר", "לרכוש", "לקנות", "הצעת מחיר", "מחיר"])) {
     return staffDirectory.find((d) => d.department === "מכירות") ?? staffDirectory[0];
   }
-  if (hasAny(t, ["תפעול", "תביעה", "תביעות", "שירות", "claim", "service", "operations"])) {
-    return staffDirectory.find((d) => d.department === "תפעול") ?? staffDirectory[0];
-  }
   return staffDirectory.find((d) => d.department === "המזכירות") ?? staffDirectory[0];
+}
+
+const HE_CAR = ["ביטוח רכב", "רכב חובה", "מקיף לרכב", "מכונית", "אוטו"];
+const HE_HOME = ["ביטוח דירה", "ביטוח בית", "תכולה", "ביטוח מבנה"];
+const HE_BIZ = ["ביטוח עסק", "בית עסק", "ביטוח לעסק", "אחריות מקצועית"];
+
+/**
+ * Detect a NON-travel insurance request (car / home / business). Travel is Dalit's
+ * core, so a travel context ("נסיעה", "חו״ל", "רכב שכור"…) always wins and returns
+ * null — those stay with Dalit. A real car/home/business request is routed to a
+ * message: Dalit takes the details and the responsible person calls back.
+ */
+export function detectNonTravel(text: string): "רכב" | "דירה" | "עסקים" | null {
+  const t = text.toLowerCase();
+  // Travel context wins outright (covers "נסיעת עסקים", "רכב שכור בחו״ל", etc.).
+  if (hasAny(t, ["נסיע", "טיסה", "טס ", "חו\"ל", "חול", "נוסע", "טיול", "יעד", "דרכון", "כבודה", "מזוודה", "שכור"]))
+    return null;
+  if (hasAny(t, HE_CAR)) return "רכב";
+  if (hasAny(t, HE_HOME)) return "דירה";
+  if (hasAny(t, HE_BIZ)) return "עסקים";
+  return null;
 }
 
 /** A conversational answer from the site's own knowledge base, or null. */

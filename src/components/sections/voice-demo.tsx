@@ -10,6 +10,7 @@ import {
   describeSlots,
   deskContact,
   detectIntent,
+  detectNonTravel,
   faqAnswer,
   nextSlots,
   parseSlotChoice,
@@ -22,8 +23,8 @@ import {
 type Line = { id: number; speaker: "caller" | "dalit" | "system"; text: string; time: string };
 
 type Pending =
-  | { kind: "quote-name" }
-  | { kind: "quote-phone"; name: string }
+  | { kind: "quote-name"; topic?: string }
+  | { kind: "quote-phone"; name: string; topic?: string }
   | { kind: "appointment-slot"; slots: Slot[] }
   | { kind: "appointment-name"; slot: Slot }
   | { kind: "appointment-phone"; slot: Slot; name: string }
@@ -490,22 +491,24 @@ export function VoiceDemo({
     window.setTimeout(() => routeCall(text), 350);
   }
 
-  async function saveLead(name: string, phone: string) {
+  async function saveLead(name: string, phone: string, topic?: string) {
     try {
       const { error: err } = await db.from("leads").insert({
         reference: voiceRef("OPH-V"),
         full_name: name,
         phone,
         email: "voice-test@ophirinsurance.com",
-        insurance_type: "אחר",
-        message: "בקשת הצעת מחיר שנרשמה בהדגמת הקול בדפדפן.",
-        source: "voice-test",
+        insurance_type: topic ?? "ביטוח נסיעות לחו״ל",
+        message: topic
+          ? `פנייה בנושא ביטוח ${topic} שהתקבלה בשיחה עם דלית — להעברה למי שאחראי.`
+          : "בקשת הצעת מחיר לביטוח נסיעות לחו״ל שנרשמה בשיחה עם דלית.",
+        source: topic ? "voice-transfer" : "voice-quote",
         notes: "נרשם על ידי דלית. הדוא״ל לא נאסף בשיחה.",
       });
       if (err) throw new Error(err.message);
-      setDbNote("נשמר ברשימת הפניות לצורכי בדיקה.");
+      setDbNote("נשמר ברשימת הפניות.");
     } catch {
-      setDbNote("נשמר לצורכי בדיקה — מסד הנתונים החי אינו מחובר בתצוגה המקדימה.");
+      setDbNote("לא הצלחנו לשמור כרגע — נסו שוב מאוחר יותר.");
     }
   }
 
@@ -532,15 +535,17 @@ export function VoiceDemo({
     const pending = pendingRef.current;
 
     if (pending?.kind === "quote-name") {
-      pendingRef.current = { kind: "quote-phone", name: text };
+      pendingRef.current = { kind: "quote-phone", name: text, topic: pending.topic };
       say(`תודה, ${text.split(" ")[0]}. מה המספר הכי נוח שנחזור אליך?`, beginListening);
       return;
     }
     if (pending?.kind === "quote-phone") {
       pendingRef.current = null;
-      void saveLead(pending.name, text);
+      void saveLead(pending.name, text, pending.topic);
       say(
-        `מעולה, רשמתי. נציג מהצוות יחזור אליך לגבי הצעת המחיר. משהו נוסף?`,
+        pending.topic
+          ? `מעולה, רשמתי. מי שאחראי על ביטוח ${pending.topic} יחזור אליך בהקדם. משהו נוסף?`
+          : `מעולה, רשמתי. נציג מהצוות יחזור אליך לגבי הצעת המחיר לנסיעה. משהו נוסף?`,
         beginListening,
       );
       return;
@@ -569,6 +574,17 @@ export function VoiceDemo({
     if (/(message|take a message|call back|callback|call me|הודעה|להשאיר הודעה|לחזור אליי|התקשרו אליי)/i.test(text)) {
       pendingRef.current = { kind: "quote-name" };
       say("בוודאי. איך קוראים לך?", beginListening);
+      return;
+    }
+
+    // Car / home / business → Dalit takes a message; the responsible person calls back.
+    const nonTravel = detectNonTravel(text);
+    if (nonTravel) {
+      pendingRef.current = { kind: "quote-name", topic: nonTravel };
+      say(
+        `ביטוח ${nonTravel} מטופל אצל הגורם המתאים אצלנו — אנחנו כאן מתמחים בביטוחי נסיעות לחו״ל. אשמח לרשום שם וטלפון ומי שאחראי יחזור אליך. איך קוראים לך?`,
+        beginListening,
+      );
       return;
     }
 
