@@ -35,6 +35,18 @@ type Pending =
   | { kind: "crm-code"; personId: string }
   | null;
 
+/** True when `heard` is most likely Dalit's own voice echoing back (its words already
+ *  appear in what she's currently saying), so we don't let her interrupt herself. */
+function isLikelyEcho(heard: string, spoken: string): boolean {
+  const h = heard.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").trim();
+  if (!h) return true;
+  if (spoken.includes(h)) return true;
+  const words = h.split(/\s+/).filter((w) => w.length > 1);
+  if (words.length === 0) return true;
+  const overlap = words.filter((w) => spoken.includes(w)).length / words.length;
+  return overlap >= 0.6;
+}
+
 /** Format an ISO-ish date to a spoken-friendly DD/MM/YYYY, or "" when unparseable. */
 function fmtDate(v: string | null): string {
   if (!v) return "";
@@ -44,25 +56,37 @@ function fmtDate(v: string | null): string {
   return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
 }
 
-/** Read a verified customer's policies back in a spoken-friendly line. */
+/** Read a verified customer's policies back — short, and aware of active vs upcoming. */
 function describePolicies(r: LookupResult): string {
   const who = r.customerName ? `, ${r.customerName}` : "";
   if (!r.policies.length) {
-    return `אימתתי אותך${who}. לא מצאתי פוליסות על שמך במערכת. אם לדעתך יש טעות, אשמח לרשום הודעה והצוות יבדוק.`;
+    return `אימתתי אותך${who}. לא מצאתי פוליסות על שמך. אם לדעתך יש טעות, אשמח לרשום הודעה והצוות יבדוק.`;
   }
-  // Prefer an in-force policy, and the most recent one.
-  const sorted = [...r.policies].sort((a, b) => (Date.parse(b.startDate || "") || 0) - (Date.parse(a.startDate || "") || 0));
-  const p = sorted.find((x) => x.active !== false) ?? sorted[0];
-  const parts: string[] = [];
-  if (p.insuranceType) parts.push(`ענף ${p.insuranceType}`);
-  if (p.policyNumber) parts.push(`מספר פוליסה ${p.policyNumber}`);
-  if (p.endDate) parts.push(`בתוקף עד ${fmtDate(p.endDate)}${p.active === false ? " (פג תוקף)" : ""}`);
-  const count = r.count || r.policies.length;
-  const head =
-    count > 1
-      ? `מצאתי ${count} פוליסות על שמך${who}. הפוליסה העדכנית ביותר: `
-      : `מצאתי את הפוליסה שלך${who}. `;
-  return head + (parts.join(", ") || "הפרטים המלאים זמינים אצל הצוות") + ". רוצים שאעביר אתכם לנציג לפרטים נוספים, או שיש עוד משהו?";
+  const now = Date.now();
+  const withT = r.policies.map((p) => {
+    const s = Date.parse(p.startDate || "");
+    const e = Date.parse(p.endDate || "");
+    return { ...p, s: Number.isNaN(s) ? null : s, e: Number.isNaN(e) ? null : e };
+  });
+  const activeList = withT.filter((p) => p.s != null && p.e != null && p.s <= now && p.e >= now);
+  const upcoming = withT.filter((p) => p.s != null && p.s > now).sort((a, b) => a.s! - b.s!);
+  const relevant = activeList.length + upcoming.length;
+  const p = activeList[0] ?? upcoming[0] ?? [...withT].sort((a, b) => (b.s ?? 0) - (a.s ?? 0))[0];
+  const statusWord = activeList.includes(p) ? "פעילה" : upcoming.includes(p) ? "עתידית" : "שהסתיימה";
+  const range =
+    p.startDate && p.endDate
+      ? `לתאריכים ${fmtDate(p.startDate)} עד ${fmtDate(p.endDate)}`
+      : p.endDate
+        ? `בתוקף עד ${fmtDate(p.endDate)}`
+        : "";
+  const details = [p.insuranceType ? `ענף ${p.insuranceType}` : "", range].filter(Boolean).join(", ");
+  const lead =
+    relevant === 1
+      ? `יש לך פוליסה אחת ${statusWord}${who}: `
+      : relevant > 1
+        ? `יש לך ${relevant} פוליסות פעילות או עתידיות${who}. הקרובה ביותר, ${statusWord}: `
+        : `אין לך פוליסה פעילה כרגע${who}. האחרונה ${statusWord}: `;
+  return `${lead}${details || "הפרטים אצל הצוות"}. רוצים שאמסור עוד פרטים, או שאעביר אתכם לנציג?`;
 }
 
 type RecognitionLike = {
@@ -85,7 +109,9 @@ function recognitionCtor(): (new () => RecognitionLike) | null {
 }
 
 const VOICE_STORAGE_KEY = "ophir-voice-name";
-const SILENCE_MS = 900;
+// How long to wait after the caller stops talking before treating the turn as
+// finished. Long enough that a natural mid-sentence pause doesn't cut them off.
+const SILENCE_MS = 1500;
 
 /** Rank Hebrew voices: prefer high-quality online/neural voices, then female names. */
 function rankVoice(v: SpeechSynthesisVoice): number {
@@ -195,6 +221,7 @@ export function VoiceDemo({
   const bargeInRef = useRef(false);
   const speechTokenRef = useRef(0);
   const speechStartRef = useRef(0);
+  const spokenTextRef = useRef(""); // what Dalit is currently saying — to filter her own voice
   const autoStartedRef = useRef(false);
   const langRef = useRef(lang);
   langRef.current = lang;
@@ -359,6 +386,7 @@ export function VoiceDemo({
   function say(text: string, after?: () => void) {
     addLine("dalit", text);
     bargeInRef.current = false;
+    spokenTextRef.current = text.toLowerCase();
     const token = ++speechTokenRef.current;
     const chunks = splitIntoChunks(text);
     let index = 0;
@@ -378,8 +406,9 @@ export function VoiceDemo({
       window.setTimeout(finish, 1100);
       return;
     }
-    // Stop listening while she speaks so the microphone cannot cancel her own voice.
-    stopRecognition();
+    // Keep listening WHILE she speaks so the caller can barge in (interrupt her).
+    // Her own voice picked up by the mic is filtered out in onresult (isLikelyEcho).
+    if (activeRef.current && !recRef.current) startRecognition();
     try {
       if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
         window.speechSynthesis.cancel();
@@ -460,13 +489,18 @@ export function VoiceDemo({
       }
       const heard = (final || interim).trim();
       if (speakingRef.current) {
-        // Barge-in: only after she has been speaking for a moment, so her own
-        // voice picked up by the microphone cannot cancel her.
-        if (heard.length >= 3 && Date.now() - speechStartRef.current > 1500) {
+        // Barge-in: the caller can interrupt her mid-sentence. Accept only real
+        // speech — not her own voice echoing back through the mic (isLikelyEcho) —
+        // and only after she's been talking for a moment.
+        if (
+          heard.length >= 4 &&
+          Date.now() - speechStartRef.current > 900 &&
+          !isLikelyEcho(heard, spokenTextRef.current)
+        ) {
           cancelSpeech(true);
-          finalRef.current = "";
-          interimRef.current = "";
-          setLiveText("");
+          finalRef.current = final ? final.trim() : "";
+          interimRef.current = final ? "" : interim;
+          setLiveText(heard);
           listeningRef.current = true;
           setCallState("listening");
           resetSilence();
