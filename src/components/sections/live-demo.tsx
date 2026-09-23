@@ -16,6 +16,18 @@ const STATE_META: Record<LiveState, { label: string; dot: string }> = {
   error: { label: "שגיאה", dot: "bg-red-500" },
 };
 
+// Gemini Live prebuilt voices worth trying for a Hebrew receptionist.
+const VOICES: { name: string; label: string }[] = [
+  { name: "Aoede", label: "Aoede · רך ונעים" },
+  { name: "Kore", label: "Kore · ברור ואסרטיבי" },
+  { name: "Leda", label: "Leda · צעיר וקליל" },
+  { name: "Zephyr", label: "Zephyr · בהיר וחייכני" },
+  { name: "Callirrhoe", label: "Callirrhoe · חם ורגוע" },
+  { name: "Charon", label: "Charon · ענייני" },
+  { name: "Puck", label: "Puck · אנרגטי" },
+  { name: "Orus", label: "Orus · יציב" },
+];
+
 type Line = { id: number; role: TranscriptRole; text: string };
 let lineId = 1;
 
@@ -23,6 +35,7 @@ export function LiveDemo() {
   const [state, setState] = useState<LiveState>("idle");
   const [lines, setLines] = useState<Line[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [voice, setVoice] = useState("Aoede");
   const sessionRef = useRef<DalitLiveSession | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
@@ -45,11 +58,14 @@ export function LiveDemo() {
   function start() {
     setError(null);
     setLines([]);
-    const s = new DalitLiveSession({
-      onState: setState,
-      onTranscript: appendTranscript,
-      onError: (m) => setError(m),
-    });
+    const s = new DalitLiveSession(
+      {
+        onState: setState,
+        onTranscript: appendTranscript,
+        onError: (m) => setError(m),
+      },
+      voice,
+    );
     sessionRef.current = s;
     void s.start();
   }
@@ -98,6 +114,26 @@ export function LiveDemo() {
             <Mic className="h-3.5 w-3.5" /> דברו באופן טבעי — אפשר גם להפריע לה באמצע.
           </span>
         ) : null}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <label htmlFor="live-voice" className="text-muted-foreground">
+          קול:
+        </label>
+        <select
+          id="live-voice"
+          value={voice}
+          onChange={(e) => setVoice(e.target.value)}
+          disabled={active}
+          className="h-9 rounded-lg border border-input bg-background px-2 text-sm text-foreground disabled:opacity-50"
+        >
+          {VOICES.map((v) => (
+            <option key={v.name} value={v.name}>
+              {v.label}
+            </option>
+          ))}
+        </select>
+        {active ? <span className="text-xs text-muted-foreground">(הקול מתעדכן בשיחה הבאה)</span> : null}
       </div>
 
       {error ? (

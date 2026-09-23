@@ -239,12 +239,14 @@ const server = http.createServer(async (req, res) => {
     // WebSocket directly, without ever seeing the real API key.
     if (req.method === "POST" && url.pathname === "/api/gemini/token") {
       if (!genai) return send(res, 501, { error: "gemini_not_configured" });
+      // A "basic" token (no liveConnectConstraints) — so the full session config
+      // (system instruction, tools, voice) sent at connect time is honored. A
+      // constrained token drops connect-time config and Dalit loses her persona.
       const t = await genai.authTokens.create({
         config: {
           uses: 1,
           expireTime: new Date(Date.now() + 30 * 60_000).toISOString(),
           newSessionExpireTime: new Date(Date.now() + 60_000).toISOString(),
-          liveConnectConstraints: { model: GEMINI_LIVE_MODEL },
           httpOptions: { apiVersion: "v1alpha" },
         },
       });

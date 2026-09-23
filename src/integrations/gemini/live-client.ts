@@ -80,8 +80,11 @@ export class DalitLiveSession {
         },
         config: {
           responseModalities: [Modality.AUDIO],
-          systemInstruction: buildSystemInstruction(),
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.voice } } },
+          systemInstruction: { parts: [{ text: buildSystemInstruction() }] },
+          speechConfig: {
+            languageCode: "he-IL",
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: this.voice } },
+          },
           tools: [{ functionDeclarations: TOOL_DECLARATIONS as any }],
           inputAudioTranscription: {},
           outputAudioTranscription: {},
@@ -95,6 +98,18 @@ export class DalitLiveSession {
       // 4) mic capture → 16 kHz PCM → stream up
       await this.startMic();
       this.set("listening");
+
+      // 5) answer the call — nudge Dalit to open with her greeting right away,
+      //    like a receptionist picking up the phone. (This text turn isn't
+      //    transcribed, so it doesn't show in the transcript.)
+      try {
+        this.session.sendClientContent({
+          turns: [{ role: "user", parts: [{ text: "(שיחה נכנסת — עני עכשיו ופתחי בברכת הפתיחה שלך.)" }] }],
+          turnComplete: true,
+        });
+      } catch {
+        /* session closing */
+      }
     } catch (e: any) {
       this.fail(String(e?.message ?? e));
     }
