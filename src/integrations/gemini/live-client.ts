@@ -92,6 +92,16 @@ export class DalitLiveSession {
           tools: [{ functionDeclarations: TOOL_DECLARATIONS as any }],
           inputAudioTranscription: {},
           outputAudioTranscription: {},
+          // Turn-taking: wait for a real pause before Dalit responds, so she doesn't
+          // cut the caller off during natural mid-sentence pauses.
+          realtimeInputConfig: {
+            automaticActivityDetection: {
+              startOfSpeechSensitivity: "START_SENSITIVITY_LOW" as any,
+              endOfSpeechSensitivity: "END_SENSITIVITY_LOW" as any,
+              prefixPaddingMs: 300,
+              silenceDurationMs: 1500,
+            },
+          },
         },
       });
 
