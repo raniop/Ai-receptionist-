@@ -9,7 +9,7 @@ import { runTool } from "./tools";
 const INPUT_RATE = 16000;
 const OUTPUT_RATE = 24000;
 // After Dalit finishes and the caller stays silent this long, she checks back in.
-const SILENCE_PROMPT_MS = 10000;
+const SILENCE_PROMPT_MS = 5000;
 
 export type LiveState = "idle" | "connecting" | "listening" | "speaking" | "thinking" | "error";
 export type TranscriptRole = "caller" | "dalit";
