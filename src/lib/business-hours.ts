@@ -27,7 +27,7 @@ const DAY_NAMES = [
 export function getOfficeStatus(now: Date = new Date()): OfficeStatus {
   const day = now.getDay();
   const minutes = now.getHours() * 60 + now.getMinutes();
-  const isOpenDay = businessHours.openDays.includes(day as 1 | 2 | 3 | 4 | 5);
+  const isOpenDay = (businessHours.openDays as readonly number[]).includes(day);
   const open =
     isOpenDay &&
     minutes >= businessHours.openMinutes &&
@@ -45,7 +45,7 @@ export function getOfficeStatus(now: Date = new Date()): OfficeStatus {
   // Find the next opening day (today if we are before opening time).
   for (let i = 0; i < 8; i++) {
     const d = (day + i) % 7;
-    if (!businessHours.openDays.includes(d as 1 | 2 | 3 | 4 | 5)) continue;
+    if (!(businessHours.openDays as readonly number[]).includes(d)) continue;
     if (i === 0 && minutes >= businessHours.openMinutes) continue;
     const when = i === 0 ? "היום" : i === 1 ? "מחר" : DAY_NAMES[d];
     return {
@@ -76,7 +76,7 @@ export function timeSlots(): string[] {
 /** True when the given YYYY-MM-DD date is a weekday. */
 export function isWeekday(iso: string): boolean {
   const d = new Date(`${iso}T12:00:00`);
-  return businessHours.openDays.includes(d.getDay() as 1 | 2 | 3 | 4 | 5);
+  return (businessHours.openDays as readonly number[]).includes(d.getDay());
 }
 
 /** Today's date as YYYY-MM-DD in local time. */

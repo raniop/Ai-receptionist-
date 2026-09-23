@@ -38,7 +38,7 @@ export function OfficeStatusPanel({ info }: { info: SiteInfo }) {
       <dl className="mt-6 space-y-4 text-sm">
         <div>
           <dt className="text-xs uppercase tracking-[0.12em] text-muted-foreground">שעות</dt>
-          <dd className="mt-1 text-foreground">{info.hours ?? "שני עד שישי, 8:30–17:30"}</dd>
+          <dd className="mt-1 text-foreground">{info.hours ?? "ראשון עד חמישי, 8:30–17:30"}</dd>
         </div>
         <div>
           <dt className="text-xs uppercase tracking-[0.12em] text-muted-foreground">טלפון</dt>

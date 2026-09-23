@@ -160,7 +160,7 @@ export function nextSlots(count = 3): Slot[] {
   let guard = 0;
   while (slots.length < count && guard < 30) {
     guard += 1;
-    if (businessHours.openDays.includes(d.getDay() as 1 | 2 | 3 | 4 | 5)) {
+    if ((businessHours.openDays as readonly number[]).includes(d.getDay())) {
       for (const time of SLOT_TIMES) {
         if (slots.length >= count) break;
         slots.push({

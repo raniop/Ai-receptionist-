@@ -433,7 +433,7 @@ export const siteInfoSeed: { key: string; value: string }[] = [
   { key: "phone", value: "073-2721111" },
   { key: "email", value: "ophir@ophirins.co.il" },
   { key: "address", value: "מצדה 9, בני ברק, מגדל ב.ס.ר 3, קומה 24" },
-  { key: "hours", value: "שני עד שישי, 8:30–17:30" },
+  { key: "hours", value: "ראשון עד חמישי, 8:30–17:30" },
   {
     key: "response_time",
     value: "אנו משיבים להודעות בתוך יום עסקים אחד, ולרוב הרבה יותר מהר בשעות הפעילות.",

@@ -29,7 +29,7 @@ export function AboutSection() {
           <div>
             <dt className="text-xs uppercase tracking-[0.12em] text-muted-foreground">שעות</dt>
             <dd className="mt-1 text-foreground">
-              {info.hours ?? "שני עד שישי, 8:30–17:30"}
+              {info.hours ?? "ראשון עד חמישי, 8:30–17:30"}
             </dd>
           </div>
           <div>

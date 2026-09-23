@@ -188,7 +188,7 @@ export function BookingForm() {
           />
           {form.appointment_date && !dateValid ? (
             <p className="mt-2 text-sm text-destructive">
-              אנחנו פתוחים בימים שני עד שישי. אנא בחרו יום חול.
+              אנחנו פתוחים בימים ראשון עד חמישי. אנא בחרו יום חול.
             </p>
           ) : null}
         </div>

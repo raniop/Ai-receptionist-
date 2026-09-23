@@ -17,11 +17,11 @@ export const site = {
 
 /** Business hours — the single source of truth for the OPEN/CLOSED status. */
 export const businessHours = {
-  /** 0 = Sunday … 6 = Saturday. Open Monday to Friday. */
-  openDays: [1, 2, 3, 4, 5],
+  /** 0 = Sunday … 6 = Saturday. Open Sunday to Thursday (Israeli work week). */
+  openDays: [0, 1, 2, 3, 4],
   openMinutes: 8 * 60 + 30,
   closeMinutes: 17 * 60 + 30,
-  label: "שני עד שישי, 8:30–17:30",
+  label: "ראשון עד חמישי, 8:30–17:30",
 } as const;
 
 // Travel insurance is the core business, so it leads the list; the rest are transferred

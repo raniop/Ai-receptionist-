@@ -184,7 +184,7 @@ export function buildReply(message: string, kb: KbEntry[], ctx: AssistantContext
 
   if (HOURS.test(text) || hasAny(text, HE.hours)) {
     return {
-      text: `המשרד פתוח בימים שני עד שישי, 8:30 עד 17:30. כעת אנחנו ${ctx.status.open ? "פתוחים" : "סגורים"} — ${ctx.status.detail}. מחוץ לשעות אלה אוכל לרשום את פרטיכם לחזרה טלפונית, או שתקבעו פגישה ליום חול.`,
+      text: `המשרד פתוח בימים ראשון עד חמישי, 8:30 עד 17:30. כעת אנחנו ${ctx.status.open ? "פתוחים" : "סגורים"} — ${ctx.status.detail}. מחוץ לשעות אלה אוכל לרשום את פרטיכם לחזרה טלפונית, או שתקבעו פגישה ליום חול.`,
       actions: actions(ctx),
     };
   }
@@ -225,7 +225,7 @@ export function buildReply(message: string, kb: KbEntry[], ctx: AssistantContext
 
   if (BYE.test(text) || hasAny(text, HE.bye)) {
     return {
-      text: `תודה שפניתם לאופיר ביטוח. אם תזדקקו לנו שוב, אני כאן בכל עת, והצוות זמין בימים שני עד שישי, 8:30 עד 17:30.`,
+      text: `תודה שפניתם לאופיר ביטוח. אם תזדקקו לנו שוב, אני כאן בכל עת, והצוות זמין בימים ראשון עד חמישי, 8:30 עד 17:30.`,
       actions: actions(ctx),
     };
   }
