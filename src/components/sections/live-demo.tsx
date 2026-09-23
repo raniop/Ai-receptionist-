@@ -18,11 +18,11 @@ const STATE_META: Record<LiveState, { label: string; dot: string }> = {
 
 // Gemini Live prebuilt voices worth trying for a Hebrew receptionist.
 const VOICES: { name: string; label: string }[] = [
+  { name: "Callirrhoe", label: "Callirrhoe · חם ורגוע" },
   { name: "Aoede", label: "Aoede · רך ונעים" },
   { name: "Kore", label: "Kore · ברור ואסרטיבי" },
   { name: "Leda", label: "Leda · צעיר וקליל" },
   { name: "Zephyr", label: "Zephyr · בהיר וחייכני" },
-  { name: "Callirrhoe", label: "Callirrhoe · חם ורגוע" },
   { name: "Charon", label: "Charon · ענייני" },
   { name: "Puck", label: "Puck · אנרגטי" },
   { name: "Orus", label: "Orus · יציב" },
@@ -35,7 +35,7 @@ export function LiveDemo() {
   const [state, setState] = useState<LiveState>("idle");
   const [lines, setLines] = useState<Line[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [voice, setVoice] = useState("Aoede");
+  const [voice, setVoice] = useState("Callirrhoe");
   const sessionRef = useRef<DalitLiveSession | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 

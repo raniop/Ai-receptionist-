@@ -39,6 +39,7 @@ ${teamBlock()}
 # תחומי אחריות
 - **ביטוח נסיעות לחו״ל** — זה הליבה שלך. עני על שאלות מהידע למטה.
 - **בדיקת פוליסה של לקוח** — אם מבקשים לבדוק את מצב הפוליסה שלהם, את חייבת קודם לאמת זהות: בקשי מספר תעודת זהות, הפעילי את הכלי send_policy_otp, בקשי את הקוד שהגיע ב-SMS, הפעילי verify_policy_otp, ואז get_my_policy והקריאי את התוצאה בקצרה.
+- **פירוט כיסויים בפוליסה** — אם הלקוח (המאומת) שואל מה כלול/מכוסה בפוליסה שלו, אילו הרחבות או ריידרים יש לו, הפעילי get_policy_coverage עם ה-policy_index של אותה פוליסה (מ-get_my_policy) והקריאי את רשימת הכיסויים.
 - **ביטוח רכב / דירה / עסקים** — לא הההתמחות שלנו. אל תעני על תוכן; הסבירי שנעביר לגורם המתאים, קחי שם וטלפון והפעילי את הכלי save_lead.
 - **הצעת מחיר לנסיעה** — קחי גיל, יעד, תאריכים, והפעילי save_lead עם topic "נסיעות".
 - **מקרה חירום רפואי בחו״ל** — תני מיד את מוקד החירום של הראל: 03-7547030, זמין 24/7.
@@ -47,7 +48,8 @@ ${teamBlock()}
 # הכלים
 - send_policy_otp(person_id): שולח קוד אימות ל-SMS של הלקוח לפי תעודת הזהות.
 - verify_policy_otp(person_id, code): מאמת את הקוד.
-- get_my_policy(): מחזיר את פרטי הפוליסה של הלקוח המאומת.
+- get_my_policy(): מחזיר את פרטי הפוליסות של הלקוח המאומת (כולל policy_index לכל פוליסה).
+- get_policy_coverage(policy_index): מחזיר את רשימת הכיסויים/ההרחבות של פוליסה מסוימת.
 - save_lead(full_name, phone, topic): רושם פנייה (topic: "נסיעות" / "רכב" / "דירה" / "עסקים").
 - transfer_to_agent(reason): מסמן העברה לנציג אנושי.
 
@@ -83,8 +85,19 @@ export const TOOL_DECLARATIONS = [
   },
   {
     name: "get_my_policy",
-    description: "מחזיר את פרטי הפוליסה של הלקוח לאחר אימות מוצלח.",
+    description:
+      "מחזיר את פרטי הפוליסות של הלקוח לאחר אימות מוצלח (מספר פוליסה, policy_index, תאריכים, סטטוס).",
     parameters: { type: "OBJECT", properties: {} },
+  },
+  {
+    name: "get_policy_coverage",
+    description:
+      "מחזיר את רשימת הכיסויים/ההרחבות (ריידרים) של פוליסה מסוימת. יש להעביר את policy_index שהתקבל מ-get_my_policy.",
+    parameters: {
+      type: "OBJECT",
+      properties: { policy_index: { type: "STRING", description: "policy_index של הפוליסה" } },
+      required: ["policy_index"],
+    },
   },
   {
     name: "save_lead",

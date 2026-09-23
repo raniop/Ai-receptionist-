@@ -139,7 +139,8 @@ function sanitizeLookup(raw) {
   const policies = list.map((p) => {
     const endDate = pick(p, ["endDate"]);
     return {
-      policyNumber: pick(p, ["fullPolicyID", "policyDoc", "policyIndex"]),
+      policyNumber: pick(p, ["fullPolicyID", "policyDoc"]),
+      policyIndex: pick(p, ["policyIndex"]),
       insuranceType: pick(p, ["areaName"]),
       startDate: pick(p, ["startDate"]),
       endDate,
@@ -233,6 +234,29 @@ const server = http.createServer(async (req, res) => {
       if (!r.ok) return send(res, 502, { error: "policy_lookup_failed" });
       const raw = await r.json();
       return send(res, 200, sanitizeLookup(raw));
+    }
+
+    // 3b) the coverages (riders) on ONE of the verified customer's policies. We look
+    //     the policy up by index, then return the riders for THIS person only — and
+    //     only if they're actually a customer on that policy.
+    if (req.method === "GET" && url.pathname === "/api/crm/policy/coverage") {
+      const auth = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      const session = verifySession(auth);
+      if (!session) return send(res, 401, { error: "session_invalid_or_expired" });
+      const policyIndex = url.searchParams.get("policyIndex");
+      if (!policyIndex) return send(res, 400, { error: "policyIndex required" });
+      const r = await crmFetch(
+        `/api/Policy/GetPolicyCustomersDetailsByIndex?policyIndex=${encodeURIComponent(policyIndex)}`,
+      );
+      if (!r.ok) return send(res, 502, { error: "coverage_lookup_failed" });
+      const j = await r.json().catch(() => null);
+      const customers = Array.isArray(j?.customers) ? j.customers : [];
+      const me = customers.find((c) => String(c.personId) === String(session.personId));
+      if (!me) return send(res, 403, { error: "not_your_policy" });
+      const coverages = (Array.isArray(me.riders) ? me.riders : [])
+        .map((rd) => pick(rd, ["riderName"]))
+        .filter(Boolean);
+      return send(res, 200, { coverages });
     }
 
     // Mint a short-lived ephemeral token so the browser can open the Gemini Live

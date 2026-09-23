@@ -52,7 +52,7 @@ export class DalitLiveSession {
   private silenceTimer: ReturnType<typeof setTimeout> | null = null;
   private silenceCount = 0;
 
-  constructor(cb: LiveCallbacks, voice = "Aoede") {
+  constructor(cb: LiveCallbacks, voice = "Callirrhoe") {
     this.cb = cb;
     this.voice = voice;
   }

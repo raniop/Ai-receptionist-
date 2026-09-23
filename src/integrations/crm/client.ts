@@ -8,6 +8,7 @@ const BASE = import.meta.env.VITE_CRM_BASE_URL || ""; // same-origin by default 
 
 export type PolicyView = {
   policyNumber: string | null;
+  policyIndex: string | number | null;
   insuranceType: string | null;
   startDate: string | null;
   endDate: string | null;
@@ -67,6 +68,20 @@ export async function getMyPolicy(): Promise<LookupResult> {
   }
   const j = (await r.json()) as LookupResult;
   return { customerName: j.customerName ?? null, count: j.count ?? 0, policies: j.policies ?? [] };
+}
+
+/** The coverages (riders) on one of the verified customer's policies, by index. */
+export async function getPolicyCoverage(policyIndex: string | number): Promise<string[]> {
+  if (!sessionToken) throw new Error("not_verified");
+  const r = await fetch(`${BASE}/api/crm/policy/coverage?policyIndex=${encodeURIComponent(String(policyIndex))}`, {
+    headers: { authorization: `Bearer ${sessionToken}` },
+  });
+  if (!r.ok) {
+    if (r.status === 401) sessionToken = null;
+    throw new Error("coverage_lookup_failed");
+  }
+  const j = (await r.json()) as { coverages: string[] };
+  return j.coverages ?? [];
 }
 
 /** Forget the current verified session (call when a lookup conversation ends). */
