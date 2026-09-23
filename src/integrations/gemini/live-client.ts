@@ -8,6 +8,8 @@ import { runTool } from "./tools";
 
 const INPUT_RATE = 16000;
 const OUTPUT_RATE = 24000;
+// After Dalit finishes and the caller stays silent this long, she checks back in.
+const SILENCE_PROMPT_MS = 10000;
 
 export type LiveState = "idle" | "connecting" | "listening" | "speaking" | "thinking" | "error";
 export type TranscriptRole = "caller" | "dalit";
@@ -47,6 +49,8 @@ export class DalitLiveSession {
   private sources = new Set<AudioBufferSourceNode>();
   private active = false;
   private voice: string;
+  private silenceTimer: ReturnType<typeof setTimeout> | null = null;
+  private silenceCount = 0;
 
   constructor(cb: LiveCallbacks, voice = "Aoede") {
     this.cb = cb;
@@ -148,7 +152,11 @@ export class DalitLiveSession {
     if (sc?.interrupted) this.stopPlayback();
 
     const inT = sc?.inputTranscription?.text;
-    if (inT) this.cb.onTranscript?.("caller", inT);
+    if (inT) {
+      this.cb.onTranscript?.("caller", inT);
+      this.clearSilence(); // the caller is talking — reset the check-in timer
+      this.silenceCount = 0;
+    }
     const outT = sc?.outputTranscription?.text;
     if (outT) this.cb.onTranscript?.("dalit", outT);
 
@@ -157,13 +165,48 @@ export class DalitLiveSession {
       const data = p.inlineData?.data;
       if (data) {
         this.set("speaking");
+        this.clearSilence();
         this.playChunk(data);
       }
     }
-    if (sc?.turnComplete) this.set("listening");
+    if (sc?.turnComplete) {
+      this.set("listening");
+      this.armSilence(); // she's done — wait for the caller, or check back in
+    }
 
     const calls = m.toolCall?.functionCalls;
     if (calls?.length) this.handleTools(calls);
+  }
+
+  private clearSilence() {
+    if (this.silenceTimer) {
+      clearTimeout(this.silenceTimer);
+      this.silenceTimer = null;
+    }
+  }
+
+  private armSilence() {
+    this.clearSilence();
+    if (this.silenceCount >= 2) return; // already checked in + said goodbye
+    this.silenceTimer = setTimeout(() => this.onSilence(), SILENCE_PROMPT_MS);
+  }
+
+  private onSilence() {
+    this.silenceTimer = null;
+    if (!this.active || !this.session) return;
+    this.silenceCount += 1;
+    const nudge =
+      this.silenceCount === 1
+        ? "(המתקשר שותק כבר כמה שניות. שאלי בעדינות אם יש עוד משהו שאפשר לעזור בו.)"
+        : "(המתקשר עדיין שותק. הודי לו על הפנייה, אמרי שאנחנו כאן בכל עת, ואחלי יום טוב.)";
+    try {
+      this.session.sendClientContent({
+        turns: [{ role: "user", parts: [{ text: nudge }] }],
+        turnComplete: true,
+      });
+    } catch {
+      /* session closing */
+    }
   }
 
   private async handleTools(calls: any[]) {
@@ -217,6 +260,7 @@ export class DalitLiveSession {
 
   stop() {
     this.active = false;
+    this.clearSilence();
     this.stopPlayback();
     try {
       this.processor?.disconnect();

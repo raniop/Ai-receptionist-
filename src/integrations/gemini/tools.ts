@@ -28,16 +28,48 @@ export async function runTool(name: string, args: Record<string, any>): Promise<
       }
       case "get_my_policy": {
         const r = await getMyPolicy();
-        return {
-          customer_name: r.customerName,
-          policy_count: r.count,
-          policies: r.policies.slice(0, 5).map((p) => ({
+        const now = Date.now();
+        const rank: Record<string, number> = { פעילה: 0, עתידית: 1, הסתיימה: 2 };
+        // A policy can be modified by additions (תוספות) — e.g. an April trip changed
+        // to October. GetById returns a row per addition, so collapse each policy
+        // number to its LATEST version (the one ending last) to reflect the current dates.
+        const latest = new Map<string, (typeof r.policies)[number]>();
+        r.policies.forEach((p, i) => {
+          const key = String(p.policyNumber ?? `#${i}`);
+          const prev = latest.get(key);
+          const end = Date.parse(p.endDate || "") || 0;
+          if (!prev || end > (Date.parse(prev.endDate || "") || 0)) latest.set(key, p);
+        });
+        const deduped = [...latest.values()];
+        const withStatus = deduped.map((p) => {
+          const s = Date.parse(p.startDate || "");
+          const e = Date.parse(p.endDate || "");
+          const status =
+            !Number.isNaN(s) && s > now
+              ? "עתידית"
+              : !Number.isNaN(e) && e >= now
+                ? "פעילה"
+                : "הסתיימה";
+          return {
             insurance_type: p.insuranceType,
             policy_number: p.policyNumber,
             start_date: p.startDate,
             end_date: p.endDate,
-            active: p.active,
-          })),
+            status,
+          };
+        });
+        // Active/upcoming first, then newest — so the relevant policy is never buried.
+        withStatus.sort(
+          (a, b) =>
+            (rank[a.status] - rank[b.status]) ||
+            (Date.parse(b.start_date || "") || 0) - (Date.parse(a.start_date || "") || 0),
+        );
+        const relevant = withStatus.filter((p) => p.status !== "הסתיימה");
+        return {
+          customer_name: r.customerName,
+          total_policies: deduped.length,
+          active_or_upcoming_count: relevant.length,
+          policies: withStatus.slice(0, 6),
         };
       }
       case "save_lead": {
