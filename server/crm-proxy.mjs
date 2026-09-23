@@ -16,6 +16,7 @@
 // Config comes from environment variables (see .env.example). Never commit .env.
 import http from "node:http";
 import crypto from "node:crypto";
+import { GoogleGenAI } from "@google/genai";
 
 const {
   CRM_BASE_URL,
@@ -24,7 +25,13 @@ const {
   CRM_PROXY_PORT = "5055",
   CRM_SESSION_SECRET,
   CRM_ALLOW_ORIGIN = "http://localhost:5173",
+  GEMINI_API_KEY,
+  GEMINI_LIVE_MODEL = "gemini-3.8-live",
 } = process.env;
+
+// Gemini Live: the browser gets a short-lived EPHEMERAL token from us and connects
+// to Google directly — the real API key never leaves the server.
+const genai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 
 // Everything sensitive (the CRM host, the service account) lives in .env, which is
 // gitignored — nothing here hardcodes it, so the public repo never leaks it.
@@ -226,6 +233,22 @@ const server = http.createServer(async (req, res) => {
       if (!r.ok) return send(res, 502, { error: "policy_lookup_failed" });
       const raw = await r.json();
       return send(res, 200, sanitizeLookup(raw));
+    }
+
+    // Mint a short-lived ephemeral token so the browser can open the Gemini Live
+    // WebSocket directly, without ever seeing the real API key.
+    if (req.method === "POST" && url.pathname === "/api/gemini/token") {
+      if (!genai) return send(res, 501, { error: "gemini_not_configured" });
+      const t = await genai.authTokens.create({
+        config: {
+          uses: 1,
+          expireTime: new Date(Date.now() + 30 * 60_000).toISOString(),
+          newSessionExpireTime: new Date(Date.now() + 60_000).toISOString(),
+          liveConnectConstraints: { model: GEMINI_LIVE_MODEL },
+          httpOptions: { apiVersion: "v1alpha" },
+        },
+      });
+      return send(res, 200, { token: t.name, model: GEMINI_LIVE_MODEL });
     }
 
     if (url.pathname === "/api/crm/health") return send(res, 200, { ok: true });

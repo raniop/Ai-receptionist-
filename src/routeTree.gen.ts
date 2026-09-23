@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as TestRouteImport } from './routes/test'
 import { Route as QuoteRouteImport } from './routes/quote'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as LiveRouteImport } from './routes/live'
 import { Route as BookRouteImport } from './routes/book'
 import { Route as AnswersRouteImport } from './routes/answers'
 import { Route as AdminRouteImport } from './routes/admin'
@@ -31,6 +32,11 @@ const QuoteRoute = QuoteRouteImport.update({
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LiveRoute = LiveRouteImport.update({
+  id: '/live',
+  path: '/live',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BookRoute = BookRouteImport.update({
@@ -65,6 +71,7 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRoute
   '/answers': typeof AnswersRoute
   '/book': typeof BookRoute
+  '/live': typeof LiveRoute
   '/login': typeof LoginRoute
   '/quote': typeof QuoteRoute
   '/test': typeof TestRoute
@@ -75,6 +82,7 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminRoute
   '/answers': typeof AnswersRoute
   '/book': typeof BookRoute
+  '/live': typeof LiveRoute
   '/login': typeof LoginRoute
   '/quote': typeof QuoteRoute
   '/test': typeof TestRoute
@@ -86,6 +94,7 @@ export interface FileRoutesById {
   '/admin': typeof AdminRoute
   '/answers': typeof AnswersRoute
   '/book': typeof BookRoute
+  '/live': typeof LiveRoute
   '/login': typeof LoginRoute
   '/quote': typeof QuoteRoute
   '/test': typeof TestRoute
@@ -98,6 +107,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/answers'
     | '/book'
+    | '/live'
     | '/login'
     | '/quote'
     | '/test'
@@ -108,6 +118,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/answers'
     | '/book'
+    | '/live'
     | '/login'
     | '/quote'
     | '/test'
@@ -118,6 +129,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/answers'
     | '/book'
+    | '/live'
     | '/login'
     | '/quote'
     | '/test'
@@ -129,6 +141,7 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRoute
   AnswersRoute: typeof AnswersRoute
   BookRoute: typeof BookRoute
+  LiveRoute: typeof LiveRoute
   LoginRoute: typeof LoginRoute
   QuoteRoute: typeof QuoteRoute
   TestRoute: typeof TestRoute
@@ -155,6 +168,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/live': {
+      id: '/live'
+      path: '/live'
+      fullPath: '/live'
+      preLoaderRoute: typeof LiveRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/book': {
@@ -201,6 +221,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRoute,
   AnswersRoute: AnswersRoute,
   BookRoute: BookRoute,
+  LiveRoute: LiveRoute,
   LoginRoute: LoginRoute,
   QuoteRoute: QuoteRoute,
   TestRoute: TestRoute,

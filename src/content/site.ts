@@ -7,6 +7,7 @@ export const site = {
   nav: [
     { label: "נציגה וירטואלית", to: "/" },
     { label: "שיחה עם דלית", to: "/test" },
+    { label: "Gemini Live ✨", to: "/live" },
     { label: "הצעת מחיר", to: "/quote" },
     { label: "קביעת פגישה", to: "/book" },
     { label: "שאלות ותשובות", to: "/answers" },

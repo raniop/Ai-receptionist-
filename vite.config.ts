@@ -28,7 +28,9 @@ export default defineConfig({
   // same origin (or set VITE_CRM_BASE_URL) so /api/crm resolves there too.
   server: {
     proxy: {
-      "/api/crm": {
+      // Both the CRM proxy and the Gemini ephemeral-token endpoint live on the
+      // local server; the browser calls them same-origin and Vite forwards them.
+      "^/api/(crm|gemini)": {
         target: `http://localhost:${process.env.CRM_PROXY_PORT || 5055}`,
         changeOrigin: true,
       },
