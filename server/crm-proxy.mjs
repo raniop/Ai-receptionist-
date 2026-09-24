@@ -72,7 +72,7 @@ async function graphToken() {
   graphTok = { token: j.access_token, expMs: Date.now() + (j.expires_in || 3600) * 1000 };
   return graphTok.token;
 }
-async function sendMailGraph(to, subject, text) {
+async function sendMailGraph(to, subject, html) {
   const token = await graphToken();
   const sender = GRAPH_SENDER || SMTP_FROM || SMTP_USER;
   const r = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(sender)}/sendMail`, {
@@ -81,13 +81,79 @@ async function sendMailGraph(to, subject, text) {
     body: JSON.stringify({
       message: {
         subject,
-        body: { contentType: "Text", content: text },
+        body: { contentType: "HTML", content: html },
         toRecipients: [{ emailAddress: { address: to } }],
       },
       saveToSentItems: true,
     }),
   });
   if (!r.ok) throw new Error(`graph sendMail ${r.status}: ${(await r.text()).slice(0, 300)}`);
+}
+
+// Escape user-supplied values before dropping them into the HTML email.
+function esc(v) {
+  return String(v ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// A clean, right-to-left HTML notification email in the Ophir Insurance style.
+function agentEmailHtml({ agentName, callerName, callerPhone, reason }) {
+  const firstName = String(agentName || "").trim().split(/\s+/)[0] || "";
+  const greeting = firstName ? `שלום ${esc(firstName)},` : "שלום,";
+  const phone = String(callerPhone || "").trim();
+  const telHref = phone.replace(/[^\d+]/g, "");
+  const now = new Date().toLocaleString("he-IL", { timeZone: "Asia/Jerusalem", dateStyle: "long", timeStyle: "short" });
+  const row = (label, value) => `
+        <tr>
+          <td style="padding:10px 0;border-bottom:1px solid #eef1f5;color:#6b7280;font-size:14px;white-space:nowrap;vertical-align:top;width:88px;">${label}</td>
+          <td style="padding:10px 0;border-bottom:1px solid #eef1f5;color:#111827;font-size:15px;font-weight:600;">${value}</td>
+        </tr>`;
+  const phoneCell = phone
+    ? `<a href="tel:${esc(telHref)}" style="color:#1d4ed8;text-decoration:none;direction:ltr;unicode-bidi:embed;display:inline-block;">${esc(phone)}</a>`
+    : "—";
+  return `<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f3f4f6;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" dir="rtl" style="max-width:560px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);font-family:Arial,'Segoe UI',Helvetica,sans-serif;text-align:right;">
+        <tr>
+          <td style="background:linear-gradient(135deg,#1e3a8a,#2563eb);padding:22px 28px;">
+            <div style="color:#ffffff;font-size:19px;font-weight:700;">אופיר ביטוח</div>
+            <div style="color:#bfdbfe;font-size:13px;margin-top:2px;">פנייה חדשה מדלית · הנציגה הקולית</div>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:28px 28px 8px;">
+            <p style="margin:0 0 6px;color:#111827;font-size:16px;font-weight:600;">${greeting}</p>
+            <p style="margin:0 0 20px;color:#4b5563;font-size:14px;line-height:1.6;">התקבלה עבורך בקשת חזרה בשיחה קולית עם דלית. להלן הפרטים:</p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+              ${row("שם המתקשר", esc(callerName) || "—")}
+              ${row("טלפון", phoneCell)}
+              ${row("נושא", esc(reason) || "—")}
+              ${row("התקבל", esc(now))}
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:8px 28px 26px;">
+            <div style="background:#eff6ff;border-radius:12px;padding:14px 16px;color:#1e40af;font-size:13px;line-height:1.6;">
+              💡 נא לחזור ללקוח בהקדם. הפנייה נרשמה אוטומטית במערכת.
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:16px 28px;background:#f9fafb;border-top:1px solid #eef1f5;color:#9ca3af;font-size:12px;line-height:1.6;">
+            הודעה זו נשלחה אוטומטית ממערכת המענה הקולי של אופיר ביטוח.
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
 }
 
 // Team email directory (server-side allowlist, so the browser can't email arbitrary
@@ -408,6 +474,7 @@ const server = http.createServer(async (req, res) => {
       if (!graphConfigured && !mailer)
         return send(res, 200, { ok: false, emailed: false, reason: "email_not_configured" });
       const subject = `בקשת חזרה — ${caller_name || "מתקשר"}`;
+      const html = agentEmailHtml({ agentName: agent_name, callerName: caller_name, callerPhone: caller_phone, reason });
       const text =
         `דלית, הנציגה הקולית, קיבלה עבורך פנייה:\n\n` +
         `שם: ${caller_name || "—"}\n` +
@@ -415,8 +482,8 @@ const server = http.createServer(async (req, res) => {
         `נושא: ${reason || "—"}\n\n` +
         `נרשם אוטומטית בשיחה קולית. נא לחזור ללקוח.`;
       try {
-        if (graphConfigured) await sendMailGraph(to, subject, text);
-        else await mailer.sendMail({ from: SMTP_FROM || SMTP_USER, to, subject, text });
+        if (graphConfigured) await sendMailGraph(to, subject, html);
+        else await mailer.sendMail({ from: SMTP_FROM || SMTP_USER, to, subject, text, html });
         return send(res, 200, { ok: true, emailed: true, via: graphConfigured ? "graph" : "smtp" });
       } catch (e) {
         console.error("[mail] send failed:", e?.message ?? e);
