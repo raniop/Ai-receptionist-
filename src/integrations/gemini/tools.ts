@@ -3,6 +3,7 @@
 // plain object that we hand straight back to the model as the function response.
 import { sendOtp, verifyOtp, getMyPolicy, getPolicyCoverage } from "@/integrations/crm/client";
 import { db } from "@/integrations/neon/client";
+import { staff, secretariat } from "@/content/site";
 
 function ref(prefix: string): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -92,6 +93,30 @@ export async function runTool(name: string, args: Record<string, any>): Promise<
           source: "gemini-voice",
         });
         return error ? { ok: false, error: error.message } : { ok: true, reference };
+      }
+      case "contact_agent": {
+        // The caller asked for a specific team member. Record a call-back request
+        // routed to that person (who's assumed busy) so the team acts on it.
+        const asked = String(args.agent_name ?? "").trim();
+        const all = [...staff, { name: secretariat.name, role: secretariat.role, email: secretariat.email }];
+        const match =
+          all.find((m) => m.name.includes(asked)) ??
+          all.find((m) => asked && asked.includes(m.name.split(" ")[0])) ??
+          null;
+        const targetName = match?.name ?? (asked || "הנציג המבוקש");
+        const reference = ref("OPH-A");
+        const { error } = await db.from("leads").insert({
+          reference,
+          full_name: String(args.caller_name ?? "").trim(),
+          phone: String(args.caller_phone ?? "").trim(),
+          email: "voice@ophirins.co.il",
+          insurance_type: "פנייה לנציג",
+          message: `המתקשר ביקש לדבר עם ${targetName}. סיבה: ${args.reason ?? "—"}. להעברה ל${targetName}${match?.email ? ` (${match.email})` : ""}.`,
+          source: "voice-agent-request",
+        });
+        return error
+          ? { ok: false, error: error.message }
+          : { ok: true, agent: targetName, reference };
       }
       case "transfer_to_agent": {
         return { ok: true, message: "השיחה מועברת לנציג. בשעות הפעילות זה מיידי, אחרת נחזור בהקדם." };

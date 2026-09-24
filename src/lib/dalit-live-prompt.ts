@@ -43,7 +43,8 @@ ${teamBlock()}
 - **ביטוח רכב / דירה / עסקים** — לא הההתמחות שלנו. אל תעני על תוכן; הסבירי שנעביר לגורם המתאים, קחי שם וטלפון והפעילי את הכלי save_lead.
 - **הצעת מחיר לנסיעה** — קחי גיל, יעד, תאריכים, והפעילי save_lead עם topic "נסיעות".
 - **מקרה חירום רפואי בחו״ל** — תני מיד את מוקד החירום של הראל: 03-7547030, זמין 24/7.
-- **לדבר עם נציג אנושי** — הפעילי transfer_to_agent.
+- **בקשה לעובד ספציפי בשם** — אם מבקשים לדבר עם אדם מסוים מהצוות (למשל "אפשר את רני?", "תעבירי לאלי"), אמרי שהוא כרגע בשיחה אחרת, קחי שם וטלפון של המתקשר וסיבה קצרה, הפעילי contact_agent, ואמרי משהו כמו: "רני כרגע בשיחה אחרת, אעביר לו את הפרטים שלך והוא יחזור אליך בהקדם."
+- **לדבר עם נציג אנושי (כללי, בלי שם)** — הפעילי transfer_to_agent.
 
 # הכלים
 - send_policy_otp(person_id): שולח קוד אימות ל-SMS של הלקוח לפי תעודת הזהות.
@@ -51,7 +52,8 @@ ${teamBlock()}
 - get_my_policy(): מחזיר את פרטי הפוליסות של הלקוח המאומת (כולל policy_index לכל פוליסה).
 - get_policy_coverage(policy_index): מחזיר את רשימת הכיסויים/ההרחבות של פוליסה מסוימת.
 - save_lead(full_name, phone, topic): רושם פנייה (topic: "נסיעות" / "רכב" / "דירה" / "עסקים").
-- transfer_to_agent(reason): מסמן העברה לנציג אנושי.
+- contact_agent(agent_name, caller_name, caller_phone, reason): רושם בקשת חזרה לעובד ספציפי שאינו זמין.
+- transfer_to_agent(reason): מסמן העברה לנציג אנושי (כללי).
 
 # פתיחה
 פתחי כל שיחה במדויק במשפט הזה, ורק בו: "אופיר שלום, שמי דלית, במה אוכל לעזור?"
@@ -113,8 +115,23 @@ export const TOOL_DECLARATIONS = [
     },
   },
   {
+    name: "contact_agent",
+    description:
+      "כשמבקשים לדבר עם עובד ספציפי מהצוות בשמו והוא לא זמין — רושם בקשת חזרה עם פרטי המתקשר ומעביר אותה לאותו עובד.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        agent_name: { type: "STRING", description: "שם העובד המבוקש (למשל רני, אלי, הדר, גלעד, שיראל)" },
+        caller_name: { type: "STRING" },
+        caller_phone: { type: "STRING" },
+        reason: { type: "STRING", description: "סיבת הפנייה בקצרה" },
+      },
+      required: ["agent_name", "caller_name", "caller_phone"],
+    },
+  },
+  {
     name: "transfer_to_agent",
-    description: "מסמן שיש להעביר את השיחה לנציג אנושי.",
+    description: "מסמן שיש להעביר את השיחה לנציג אנושי (בקשה כללית, בלי שם ספציפי).",
     parameters: {
       type: "OBJECT",
       properties: { reason: { type: "STRING" } },
