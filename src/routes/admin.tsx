@@ -4,6 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AdminDashboard } from "@/components/admin/dashboard";
 import { LeadsPanel } from "@/components/admin/leads-panel";
 import { AppointmentsPanel } from "@/components/admin/appointments-panel";
+import { AgentsPanel } from "@/components/admin/agents-panel";
 
 export const Route = createFileRoute("/admin")({ component: AdminPage });
 
@@ -69,6 +70,7 @@ function AdminPage() {
           <TabsTrigger value="dashboard">סקירה</TabsTrigger>
           <TabsTrigger value="leads">פניות</TabsTrigger>
           <TabsTrigger value="appointments">פגישות</TabsTrigger>
+          <TabsTrigger value="agents">זמינות צוות</TabsTrigger>
         </TabsList>
         <TabsContent value="dashboard" className="mt-6">
           <AdminDashboard />
@@ -78,6 +80,9 @@ function AdminPage() {
         </TabsContent>
         <TabsContent value="appointments" className="mt-6">
           <AppointmentsPanel />
+        </TabsContent>
+        <TabsContent value="agents" className="mt-6">
+          <AgentsPanel />
         </TabsContent>
       </Tabs>
     </main>

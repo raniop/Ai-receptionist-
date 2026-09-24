@@ -16,6 +16,7 @@
 // Config comes from environment variables (see .env.example). Never commit .env.
 import http from "node:http";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import { GoogleGenAI } from "@google/genai";
 
 const {
@@ -126,6 +127,38 @@ function normalizePhone(p) {
   if (d.startsWith("972")) d = "0" + d.slice(3);
   if (d.length === 9 && d.startsWith("5")) d = "0" + d; // "52…" → "052…"
   return d;
+}
+
+// ── agent availability (manual for now; swap for real PBX presence later) ─────
+// Shared across all clients: the admin sets it, Dalit reads it. Persisted to a file
+// so it survives restarts. Values: "available" | "busy" | "away".
+const STATUS_FILE = new URL("./agent-status.json", import.meta.url);
+function loadStatuses() {
+  try {
+    return JSON.parse(fs.readFileSync(STATUS_FILE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+function saveStatuses(s) {
+  try {
+    fs.writeFileSync(STATUS_FILE, JSON.stringify(s, null, 2));
+  } catch {
+    /* ignore */
+  }
+}
+const VALID_STATUS = new Set(["available", "busy", "away"]);
+/** Best-match an agent name to a stored key (fuzzy: first name / contains). */
+function statusFor(name) {
+  const s = loadStatuses();
+  const q = String(name || "").trim();
+  if (!q) return "available";
+  const keys = Object.keys(s);
+  const hit =
+    keys.find((k) => k === q) ??
+    keys.find((k) => k.includes(q) || q.includes(k.split(" ")[0])) ??
+    null;
+  return hit ? s[hit] : "available"; // default available when unset/unknown
 }
 
 function isActive(endDate) {
@@ -275,6 +308,23 @@ const server = http.createServer(async (req, res) => {
         },
       });
       return send(res, 200, { token: t.name, model: GEMINI_LIVE_MODEL });
+    }
+
+    // Agent availability — read (Dalit's tool, and the admin panel) …
+    if (req.method === "GET" && url.pathname === "/api/agents/status") {
+      const agent = url.searchParams.get("agent");
+      if (agent) return send(res, 200, { agent, status: statusFor(agent) });
+      return send(res, 200, { statuses: loadStatuses() });
+    }
+    // … and set (the admin toggle).
+    if (req.method === "POST" && url.pathname === "/api/agents/status") {
+      const { agent, status } = await readJson(req);
+      if (!agent || !VALID_STATUS.has(status))
+        return send(res, 400, { error: "agent + status (available|busy|away) required" });
+      const all = loadStatuses();
+      all[String(agent)] = status;
+      saveStatuses(all);
+      return send(res, 200, { ok: true, statuses: all });
     }
 
     if (url.pathname === "/api/crm/health") return send(res, 200, { ok: true });

@@ -22,3 +22,6 @@ scripts/
 package-lock.json
 # Local editor/agent tooling
 .claude/
+
+# Runtime agent availability state
+server/agent-status.json

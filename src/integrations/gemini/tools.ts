@@ -4,6 +4,7 @@
 import { sendOtp, verifyOtp, getMyPolicy, getPolicyCoverage } from "@/integrations/crm/client";
 import { db } from "@/integrations/neon/client";
 import { staff, secretariat } from "@/content/site";
+import { getAgentStatus, STATUS_LABEL } from "@/integrations/agents/status";
 
 function ref(prefix: string): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -93,6 +94,10 @@ export async function runTool(name: string, args: Record<string, any>): Promise<
           source: "gemini-voice",
         });
         return error ? { ok: false, error: error.message } : { ok: true, reference };
+      }
+      case "check_agent_status": {
+        const status = await getAgentStatus(String(args.agent_name ?? "").trim());
+        return { status, status_label: STATUS_LABEL[status] };
       }
       case "contact_agent": {
         // The caller asked for a specific team member. Record a call-back request
