@@ -48,6 +48,48 @@ const mailer =
       })
     : null;
 
+// Microsoft Graph (OAuth2 client-credentials) — the modern way to send mail from an
+// Office 365 mailbox, unaffected by the tenant's basic-auth/SMTP blocks. Preferred
+// over SMTP when an Azure app registration is configured.
+const { AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, GRAPH_SENDER } = process.env;
+const graphConfigured = Boolean(AZURE_TENANT_ID && AZURE_CLIENT_ID && AZURE_CLIENT_SECRET);
+let graphTok = null; // { token, expMs }
+async function graphToken() {
+  if (graphTok && graphTok.expMs - 60_000 > Date.now()) return graphTok.token;
+  const body = new URLSearchParams({
+    client_id: AZURE_CLIENT_ID,
+    client_secret: AZURE_CLIENT_SECRET,
+    scope: "https://graph.microsoft.com/.default",
+    grant_type: "client_credentials",
+  });
+  const r = await fetch(`https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`graph token ${r.status}: ${j.error_description || JSON.stringify(j).slice(0, 200)}`);
+  graphTok = { token: j.access_token, expMs: Date.now() + (j.expires_in || 3600) * 1000 };
+  return graphTok.token;
+}
+async function sendMailGraph(to, subject, text) {
+  const token = await graphToken();
+  const sender = GRAPH_SENDER || SMTP_FROM || SMTP_USER;
+  const r = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(sender)}/sendMail`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      message: {
+        subject,
+        body: { contentType: "Text", content: text },
+        toRecipients: [{ emailAddress: { address: to } }],
+      },
+      saveToSentItems: true,
+    }),
+  });
+  if (!r.ok) throw new Error(`graph sendMail ${r.status}: ${(await r.text()).slice(0, 300)}`);
+}
+
 // Team email directory (server-side allowlist, so the browser can't email arbitrary
 // addresses). Names match src/content/site.ts.
 const STAFF_EMAILS = {
@@ -363,20 +405,19 @@ const server = http.createServer(async (req, res) => {
       const { agent_name, caller_name, caller_phone, reason } = await readJson(req);
       const to = agentEmail(agent_name);
       if (!to) return send(res, 400, { error: "unknown_agent" });
-      if (!mailer) return send(res, 200, { ok: false, emailed: false, reason: "smtp_not_configured" });
+      if (!graphConfigured && !mailer)
+        return send(res, 200, { ok: false, emailed: false, reason: "email_not_configured" });
+      const subject = `בקשת חזרה — ${caller_name || "מתקשר"}`;
+      const text =
+        `דלית, הנציגה הקולית, קיבלה עבורך פנייה:\n\n` +
+        `שם: ${caller_name || "—"}\n` +
+        `טלפון: ${caller_phone || "—"}\n` +
+        `נושא: ${reason || "—"}\n\n` +
+        `נרשם אוטומטית בשיחה קולית. נא לחזור ללקוח.`;
       try {
-        await mailer.sendMail({
-          from: SMTP_FROM || SMTP_USER,
-          to,
-          subject: `בקשת חזרה — ${caller_name || "מתקשר"}`,
-          text:
-            `דלית, הנציגה הקולית, קיבלה עבורך פנייה:\n\n` +
-            `שם: ${caller_name || "—"}\n` +
-            `טלפון: ${caller_phone || "—"}\n` +
-            `נושא: ${reason || "—"}\n\n` +
-            `נרשם אוטומטית בשיחה קולית. נא לחזור ללקוח.`,
-        });
-        return send(res, 200, { ok: true, emailed: true });
+        if (graphConfigured) await sendMailGraph(to, subject, text);
+        else await mailer.sendMail({ from: SMTP_FROM || SMTP_USER, to, subject, text });
+        return send(res, 200, { ok: true, emailed: true, via: graphConfigured ? "graph" : "smtp" });
       } catch (e) {
         console.error("[mail] send failed:", e?.message ?? e);
         return send(res, 200, { ok: false, emailed: false, error: String(e?.message ?? e) });
