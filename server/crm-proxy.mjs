@@ -18,6 +18,7 @@ import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { GoogleGenAI } from "@google/genai";
+import nodemailer from "nodemailer";
 
 const {
   CRM_BASE_URL,
@@ -33,6 +34,36 @@ const {
 // Gemini Live: the browser gets a short-lived EPHEMERAL token from us and connects
 // to Google directly — the real API key never leaves the server.
 const genai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
+
+// SMTP (Office 365) — Dalit emails a team member when she takes a message for them.
+const { SMTP_HOST, SMTP_PORT = "587", SMTP_USER, SMTP_PASS, SMTP_FROM } = process.env;
+const mailer =
+  SMTP_HOST && SMTP_USER && SMTP_PASS
+    ? nodemailer.createTransport({
+        host: SMTP_HOST,
+        port: Number(SMTP_PORT),
+        secure: Number(SMTP_PORT) === 465,
+        requireTLS: true,
+        auth: { user: SMTP_USER, pass: SMTP_PASS },
+      })
+    : null;
+
+// Team email directory (server-side allowlist, so the browser can't email arbitrary
+// addresses). Names match src/content/site.ts.
+const STAFF_EMAILS = {
+  "אלי אופיר": "eli@ophirins.co.il",
+  "הדר גלעד": "hadar@ophirins.co.il",
+  "רני אופיר": "rani@ophirins.co.il",
+  "גלעד כרמונה": "gilad@ophirins.co.il",
+  שיראל: "ophir@ophirins.co.il",
+};
+function agentEmail(name) {
+  const q = String(name || "").trim();
+  if (!q) return null;
+  const keys = Object.keys(STAFF_EMAILS);
+  const hit = keys.find((k) => k.includes(q)) ?? keys.find((k) => q.includes(k.split(" ")[0]));
+  return hit ? STAFF_EMAILS[hit] : null;
+}
 
 // Everything sensitive (the CRM host, the service account) lives in .env, which is
 // gitignored — nothing here hardcodes it, so the public repo never leaks it.
@@ -325,6 +356,31 @@ const server = http.createServer(async (req, res) => {
       all[String(agent)] = status;
       saveStatuses(all);
       return send(res, 200, { ok: true, statuses: all });
+    }
+
+    // Email a team member the details of a caller who asked for them.
+    if (req.method === "POST" && url.pathname === "/api/notify/agent") {
+      const { agent_name, caller_name, caller_phone, reason } = await readJson(req);
+      const to = agentEmail(agent_name);
+      if (!to) return send(res, 400, { error: "unknown_agent" });
+      if (!mailer) return send(res, 200, { ok: false, emailed: false, reason: "smtp_not_configured" });
+      try {
+        await mailer.sendMail({
+          from: SMTP_FROM || SMTP_USER,
+          to,
+          subject: `בקשת חזרה — ${caller_name || "מתקשר"}`,
+          text:
+            `דלית, הנציגה הקולית, קיבלה עבורך פנייה:\n\n` +
+            `שם: ${caller_name || "—"}\n` +
+            `טלפון: ${caller_phone || "—"}\n` +
+            `נושא: ${reason || "—"}\n\n` +
+            `נרשם אוטומטית בשיחה קולית. נא לחזור ללקוח.`,
+        });
+        return send(res, 200, { ok: true, emailed: true });
+      } catch (e) {
+        console.error("[mail] send failed:", e?.message ?? e);
+        return send(res, 200, { ok: false, emailed: false, error: String(e?.message ?? e) });
+      }
     }
 
     if (url.pathname === "/api/crm/health") return send(res, 200, { ok: true });

@@ -119,9 +119,25 @@ export async function runTool(name: string, args: Record<string, any>): Promise<
           message: `המתקשר ביקש לדבר עם ${targetName}. סיבה: ${args.reason ?? "—"}. להעברה ל${targetName}${match?.email ? ` (${match.email})` : ""}.`,
           source: "voice-agent-request",
         });
-        return error
-          ? { ok: false, error: error.message }
-          : { ok: true, agent: targetName, reference };
+        if (error) return { ok: false, error: error.message };
+        // Email the team member the caller's details.
+        let emailed = false;
+        try {
+          const nr = await fetch("/api/notify/agent", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              agent_name: targetName,
+              caller_name: args.caller_name,
+              caller_phone: args.caller_phone,
+              reason: args.reason,
+            }),
+          });
+          emailed = nr.ok ? Boolean((await nr.json())?.emailed) : false;
+        } catch {
+          emailed = false;
+        }
+        return { ok: true, agent: targetName, reference, emailed };
       }
       case "transfer_to_agent": {
         return { ok: true, message: "השיחה מועברת לנציג. בשעות הפעילות זה מיידי, אחרת נחזור בהקדם." };
