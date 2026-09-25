@@ -20,8 +20,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { GoogleGenAI } from "@google/genai";
-import WsClient from "ws";
-const WebSocketServer = WsClient.WebSocketServer || WsClient.Server;
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+// `ws` is CommonJS; its named exports aren't reachable via a default ESM import,
+// so load it with require to get the WebSocketServer + WebSocket client classes.
+const { WebSocketServer, WebSocket: WsClient } = require("ws");
 import { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
