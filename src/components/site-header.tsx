@@ -30,7 +30,8 @@ export function SiteHeader() {
           {site.name}
         </Link>
         <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-          {site.nav.map((item) => (
+          {/* On the voice page keep the nav focused on the AI-receptionist links. */}
+          {(light ? site.nav.filter((n) => ["/", "/test", "/live"].includes(n.to)) : site.nav).map((item) => (
             <Link
               key={item.to}
               to={item.to}
