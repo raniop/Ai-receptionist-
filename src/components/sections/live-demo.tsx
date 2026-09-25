@@ -76,7 +76,7 @@ export function LiveDemo() {
   const [error, setError] = useState<string | null>(null);
   const [voice, setVoice] = useState(() => lsGet("dalit:geminiVoice", "Callirrhoe"));
   const [fast, setFast] = useState(false);
-  const [engine, setEngine] = useState<Engine>(() => lsGet("dalit:engine", "azure") as Engine);
+  const [engine, setEngine] = useState<Engine>(() => lsGet("dalit:engine", "gemini") as Engine);
   const [brain, setBrain] = useState<Brain>(() => lsGet("dalit:brain", "gemini") as Brain);
   const [elevenVoice, setElevenVoice] = useState(() => lsGet("dalit:elevenVoice", ELEVEN_VOICES[0].id));
   const [azureVoice, setAzureVoice] = useState(() => lsGet("dalit:azureVoice", AZURE_VOICES[0].id));

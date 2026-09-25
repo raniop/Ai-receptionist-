@@ -613,17 +613,22 @@ const server = http.createServer(async (req, res) => {
       if (!session) return send(res, 401, { error: "session_invalid_or_expired" });
       const policyIndex = url.searchParams.get("policyIndex");
       if (!policyIndex) return send(res, 400, { error: "policyIndex required" });
-      const r = await crmFetch(
-        `/api/Policy/GetPolicyCustomersDetailsByIndex?policyIndex=${encodeURIComponent(policyIndex)}`,
-      );
+      // The policy row from GetById carries the full insured list WITH names
+      // (unlike GetPolicyCustomersDetailsByIndex). Scope it to the caller's own id.
+      const r = await crmFetch(`/api/Policy/GetById?id=${encodeURIComponent(session.personId)}`);
       if (!r.ok) return send(res, 502, { error: "members_lookup_failed" });
-      const j = await r.json().catch(() => null);
-      const customers = Array.isArray(j?.customers) ? j.customers : [];
-      if (customers[0]) console.error("[members] customer keys:", Object.keys(customers[0]).join(","));
-      const me = customers.find((c) => String(c.personId) === String(session.personId));
-      if (!me) return send(res, 403, { error: "not_your_policy" });
+      const list = await r.json().catch(() => null);
+      const policies = Array.isArray(list) ? list : list ? [list] : [];
+      const policy = policies.find((p) => String(pick(p, ["policyIndex"])) === String(policyIndex));
+      const customers = Array.isArray(policy?.customers) ? policy.customers : [];
+      // Security: the caller must actually be one of the insured on this policy.
+      if (!customers.some((c) => String(c.personId) === String(session.personId)))
+        return send(res, 403, { error: "not_your_policy" });
       const members = customers
-        .map((c) => ({ name: personName(c), is_me: String(c.personId) === String(session.personId) }))
+        .map((c) => ({
+          name: personName(c),
+          is_me: String(c.personId) === String(session.personId),
+        }))
         .filter((m) => m.name);
       return send(res, 200, { members });
     }
