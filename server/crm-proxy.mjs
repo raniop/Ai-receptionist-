@@ -375,6 +375,8 @@ function verifySession(token) {
   if (!token || !token.includes(".")) return null;
   const [payload, sig] = token.split(".");
   const expected = crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
+  // timingSafeEqual throws on unequal lengths — a forged token must just fail.
+  if (!sig || sig.length !== expected.length) return null;
   if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
   try {
     const data = JSON.parse(Buffer.from(payload, "base64url").toString());
@@ -556,13 +558,13 @@ async function mcpInternal(pathname, { method = "GET", body, session } = {}) {
 const MCP_TOOLS = [
   { name: "send_policy_otp", description: "שולח קוד אימות ב-SMS ללקוח לפי תעודת הזהות, לפני חשיפת פרטי פוליסה.",
     inputSchema: { type: "object", properties: { person_id: { type: "string", description: "מספר תעודת הזהות" } }, required: ["person_id"] } },
-  { name: "verify_policy_otp", description: "מאמת את קוד ה-SMS. בהצלחה מחזיר 'session' שיש להעביר לכלי הפוליסה.",
+  { name: "verify_policy_otp", description: "מאמת את קוד ה-SMS. בהצלחה מחזיר מיד את כל פרטי הלקוח: שם, הפוליסות, ולפוליסות הפעילות/האחרונות גם כיסויים (coverages) ושמות המבוטחים (members). אין צורך לקרוא לכלים נוספים אחרי זה — עני מתוך התוצאה.",
     inputSchema: { type: "object", properties: { person_id: { type: "string" }, code: { type: "string", description: "הקוד בן 4-6 ספרות" } }, required: ["person_id", "code"] } },
-  { name: "get_my_policy", description: "מחזיר את פוליסות הלקוח המאומת. דורש session מ-verify_policy_otp.",
+  { name: "get_my_policy", description: "מחזיר שוב את פוליסות הלקוח המאומת עם כיסויים ומבוטחים. בדרך כלל לא נחוץ — verify_policy_otp כבר מחזיר הכל. דורש session.",
     inputSchema: { type: "object", properties: { session: { type: "string" } }, required: ["session"] } },
-  { name: "get_policy_coverage", description: "מחזיר כיסויים/ריידרים של פוליסה. דורש session ו-policy_index.",
+  { name: "get_policy_coverage", description: "כיסויים/ריידרים של פוליסה ישנה שלא הגיעה עם פרטים מלאים. דורש session ו-policy_index.",
     inputSchema: { type: "object", properties: { session: { type: "string" }, policy_index: { type: "string" } }, required: ["session", "policy_index"] } },
-  { name: "get_policy_members", description: "מחזיר את שמות המבוטחים על פוליסה. דורש session ו-policy_index.",
+  { name: "get_policy_members", description: "שמות המבוטחים על פוליסה ישנה שלא הגיעה עם פרטים מלאים. דורש session ו-policy_index.",
     inputSchema: { type: "object", properties: { session: { type: "string" }, policy_index: { type: "string" } }, required: ["session", "policy_index"] } },
   { name: "save_lead", description: "רושם פנייה של לקוח (שולח מייל למשרד) — להצעת מחיר או לביטוח רכב/דירה/עסקים.",
     inputSchema: { type: "object", properties: { full_name: { type: "string" }, phone: { type: "string" }, topic: { type: "string" } }, required: ["full_name", "phone"] } },
@@ -572,22 +574,101 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", properties: { agent_name: { type: "string" }, caller_name: { type: "string" }, caller_phone: { type: "string" }, reason: { type: "string" } }, required: ["agent_name", "caller_name", "caller_phone"] } },
 ];
 
+// Every tool call makes the voice model stop, wait and think again (~1s each on
+// xAI's side), so the policy flow returns everything in ONE result: the most
+// relevant policies (active first, then latest) with their coverages and insured
+// names, plus a short list of older ones. The heavy GetById runs once (members
+// come from its rows) and the result stays small — the model reads all of it.
+// The CRM's per-policy riders call is slow (~0.5s each, and it serializes), so the
+// bundle is PREFETCHED the moment the OTP SMS goes out — built while the caller
+// reads the code aloud. It stays server-side and is only handed out after the OTP
+// verifies (policyBundle checks the session first).
+const BUNDLE_DETAILED = 3;
+const BUNDLE_OLDER = 10;
+const BUNDLE_TTL_MS = 2 * 60_000;
+const bundleCache = new Map(); // personId → { at, promise }
+const day = (s) => (s ? String(s).slice(0, 10) : s);
+
+function prefetchBundle(personId) {
+  const id = String(personId);
+  for (const [k, v] of bundleCache) if (Date.now() - v.at >= BUNDLE_TTL_MS) bundleCache.delete(k);
+  const hit = bundleCache.get(id);
+  if (hit && Date.now() - hit.at < BUNDLE_TTL_MS) return hit.promise;
+  const promise = buildBundle(id).catch(() => null);
+  bundleCache.set(id, { at: Date.now(), promise });
+  promise.then((b) => { if (!b) bundleCache.delete(id); });
+  return promise;
+}
+
+async function policyBundle(token) {
+  const session = verifySession(token);
+  if (!session) return null;
+  return prefetchBundle(session.personId);
+}
+
+async function buildBundle(me) {
+  const r = await crmFetch(`/api/Policy/GetById?id=${encodeURIComponent(me)}`);
+  if (!r.ok) return null;
+  const raw = await r.json().catch(() => null);
+  const rawList = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  const { customerName, policies } = sanitizeLookup(rawList);
+  const endT = (x) => Date.parse(x.endDate) || 0;
+  const ranked = [...policies].sort((x, y) => (y.active === true) - (x.active === true) || endT(y) - endT(x));
+  const detailed = await Promise.all(
+    ranked.slice(0, BUNDLE_DETAILED).map(async (pol) => {
+      const row = rawList.find((p) => String(pick(p, ["policyIndex"])) === String(pol.policyIndex));
+      const customers = Array.isArray(row?.customers) ? row.customers : [];
+      // Security: only list the insured when the caller is on this policy.
+      const members = customers.some((c) => String(c.personId) === me)
+        ? customers
+            .map((c) => ({ name: personName(c), is_me: String(c.personId) === me }))
+            .filter((m) => m.name)
+        : [];
+      let coverages = [];
+      const cr = await crmFetch(`/api/Policy/GetPolicyCustomersDetailsByIndex?policyIndex=${encodeURIComponent(pol.policyIndex)}`);
+      if (cr.ok) {
+        const cj = await cr.json().catch(() => null);
+        const mine = (Array.isArray(cj?.customers) ? cj.customers : []).find((c) => String(c.personId) === me);
+        coverages = (Array.isArray(mine?.riders) ? mine.riders : []).map((rd) => pick(rd, ["riderName"])).filter(Boolean);
+      }
+      return { ...pol, startDate: day(pol.startDate), endDate: day(pol.endDate), coverages, members };
+    }),
+  );
+  const older = ranked.slice(BUNDLE_DETAILED);
+  return {
+    customer_name: customerName,
+    total_policies: policies.length,
+    policies: detailed,
+    older_policies: older.slice(0, BUNDLE_OLDER).map((p) => ({
+      policyIndex: p.policyIndex,
+      insuranceType: p.insuranceType,
+      startDate: day(p.startDate),
+      endDate: day(p.endDate),
+    })),
+    ...(older.length > BUNDLE_OLDER ? { note: `ועוד ${older.length - BUNDLE_OLDER} פוליסות ישנות יותר שלא פורטו` } : {}),
+  };
+}
+
 async function runMcpTool(name, a = {}) {
   switch (name) {
     case "send_policy_otp": {
       const r = await mcpInternal("/api/crm/otp/send", { method: "POST", body: { personId: a.person_id } });
+      if (r.status === 200) prefetchBundle(a.person_id); // warm it while the caller reads the SMS
       return r.status === 200
         ? { ok: true, phone_hint: r.phoneHint ?? null }
         : { ok: false, error: 'לא הצלחתי לשלוח קוד. ייתכן שאין טלפון רשום על תעודת הזהות הזו.' };
     }
     case "verify_policy_otp": {
       const r = await mcpInternal("/api/crm/otp/verify", { method: "POST", body: { personId: a.person_id, code: a.code } });
-      return r.token ? { ok: true, session: r.token } : { ok: false, error: "הקוד שגוי או פג תוקף." };
+      if (!r.token) return { ok: false, error: "הקוד שגוי או פג תוקף." };
+      const bundle = await policyBundle(r.token);
+      return bundle
+        ? { ok: true, session: r.token, ...bundle }
+        : { ok: true, session: r.token, error: "האימות הצליח אך שליפת הפוליסה נכשלה." };
     }
     case "get_my_policy": {
-      const r = await mcpInternal("/api/crm/policy", { session: a.session });
-      if (r.status !== 200) return { ok: false, error: "נדרש אימות תקף." };
-      return { customer_name: r.customerName, count: r.count, policies: r.policies };
+      const bundle = await policyBundle(a.session);
+      return bundle ?? { ok: false, error: "נדרש אימות תקף." };
     }
     case "get_policy_coverage": {
       const r = await mcpInternal(`/api/crm/policy/coverage?policyIndex=${encodeURIComponent(a.policy_index)}`, { session: a.session });
