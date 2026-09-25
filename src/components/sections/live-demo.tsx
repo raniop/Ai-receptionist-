@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { Mic, PhoneCall, PhoneOff } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
   DalitLiveSession,
   type LiveState,
@@ -8,12 +7,12 @@ import {
 } from "@/integrations/gemini/live-client";
 
 const STATE_META: Record<LiveState, { label: string; dot: string }> = {
-  idle: { label: "מוכן", dot: "bg-muted-foreground" },
-  connecting: { label: "מתחבר…", dot: "bg-amber-400" },
-  listening: { label: "מקשיבה", dot: "bg-emerald-400" },
-  speaking: { label: "מדברת", dot: "bg-primary" },
-  thinking: { label: "בודקת…", dot: "bg-sky-400" },
-  error: { label: "שגיאה", dot: "bg-red-500" },
+  idle: { label: "מוכנה", dot: "#64748b" },
+  connecting: { label: "מתחברת…", dot: "#f59e0b" },
+  listening: { label: "מקשיבה", dot: "#10b981" },
+  speaking: { label: "מדברת", dot: "#0f766e" },
+  thinking: { label: "בודקת…", dot: "#0ea5e9" },
+  error: { label: "שגיאה", dot: "#ef4444" },
 };
 
 // Gemini Live prebuilt voices worth trying for a Hebrew receptionist.
@@ -77,63 +76,92 @@ export function LiveDemo() {
 
   const active = state !== "idle" && state !== "error";
   const meta = STATE_META[state];
+  const ringsOn = state === "listening" || state === "speaking" || state === "thinking";
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-3">
-        <span className="relative flex h-12 w-12 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
-          דל
-          {state === "listening" ? (
-            <span className="voice-ring pointer-events-none absolute inset-0 rounded-full border-2 border-primary" aria-hidden="true" />
+      {/* Call stage — teal liquid-glass hero with the ripple orb */}
+      <div className="dalit-stage">
+        <span className="dalit-blob" style={{ width: 190, height: 190, background: "#5eead4", top: -30, insetInlineStart: -30 }} aria-hidden="true" />
+        <span className="dalit-blob" style={{ width: 170, height: 170, background: "#7dd3fc", top: 4, insetInlineEnd: -40, opacity: 0.7 }} aria-hidden="true" />
+        <span className="dalit-blob" style={{ width: 150, height: 150, background: "#34d399", bottom: -20, insetInlineStart: "34%", opacity: 0.6 }} aria-hidden="true" />
+
+        <div className="dalit-glass mx-auto max-w-sm">
+          <div className={`dalit-orb ${active ? "is-breathing" : ""}`}>
+            {ringsOn ? (
+              <>
+                <span className="dalit-ring" aria-hidden="true" />
+                <span className="dalit-ring" aria-hidden="true" />
+              </>
+            ) : null}
+          </div>
+
+          <div className="mt-5 flex items-center justify-center">
+            <span
+              className="inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-bold"
+              style={{ background: "rgba(255,255,255,0.55)", color: "#0b3c34", border: "1px solid rgba(255,255,255,0.6)" }}
+            >
+              <span className="h-2 w-2 rounded-full" style={{ background: meta.dot }} aria-hidden="true" />
+              {meta.label}
+            </span>
+          </div>
+
+          <div className="mt-4">
+            {!active ? (
+              <button
+                type="button"
+                onClick={start}
+                className="inline-flex h-12 w-full max-w-xs items-center justify-center gap-2 rounded-2xl px-6 text-[15px] font-bold text-white transition active:scale-[0.98]"
+                style={{ background: "#0f766e", boxShadow: "0 12px 26px rgba(15,118,110,0.4)" }}
+              >
+                <PhoneCall className="h-4 w-4" />
+                {state === "error" ? "נסה שוב" : "התחל שיחה"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={stop}
+                className="inline-flex h-12 w-full max-w-xs items-center justify-center gap-2 rounded-2xl px-6 text-[15px] font-bold transition active:scale-[0.98]"
+                style={{ background: "rgba(255,255,255,0.85)", color: "#0b3c34", border: "1px solid rgba(255,255,255,0.7)" }}
+              >
+                <PhoneOff className="h-4 w-4" />
+                סיים שיחה
+              </button>
+            )}
+          </div>
+
+          {active ? (
+            <p className="mt-3 flex items-center justify-center gap-1.5 text-xs font-medium" style={{ color: "#0b5e52" }}>
+              <Mic className="h-3.5 w-3.5" /> דברו באופן טבעי — אפשר גם להפריע לה באמצע.
+            </p>
           ) : null}
-        </span>
-        <div className="flex-1">
-          <p className="text-sm font-semibold text-foreground">דלית · Gemini Live</p>
-          <p className="text-xs text-muted-foreground">נציגה קולית בזמן אמת</p>
+
+          {/* Voice picker on the glass */}
+          <div className="mt-4 flex items-center justify-center gap-2 text-xs" style={{ color: "#0b5e52" }}>
+            <label htmlFor="live-voice" className="font-semibold">
+              קול:
+            </label>
+            <select
+              id="live-voice"
+              value={voice}
+              onChange={(e) => setVoice(e.target.value)}
+              disabled={active}
+              className="h-8 rounded-lg px-2 text-xs font-medium disabled:opacity-50"
+              style={{ background: "rgba(255,255,255,0.7)", color: "#0b3c34", border: "1px solid rgba(255,255,255,0.7)" }}
+            >
+              {VOICES.map((v) => (
+                <option key={v.name} value={v.name}>
+                  {v.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {active ? (
+            <p className="mt-1.5 text-[11px]" style={{ color: "#0b5e52", opacity: 0.75 }}>
+              (הקול מתעדכן בשיחה הבאה)
+            </p>
+          ) : null}
         </div>
-        <span className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-foreground">
-          <span className={`h-2 w-2 rounded-full ${meta.dot}`} aria-hidden="true" />
-          {meta.label}
-        </span>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-3">
-        {!active ? (
-          <Button type="button" className="h-12 rounded-full px-6" onClick={start}>
-            <PhoneCall className="h-4 w-4" />
-            {state === "error" ? "נסה שוב" : "התחל שיחה"}
-          </Button>
-        ) : (
-          <Button type="button" variant="outline" className="h-12 rounded-full px-6" onClick={stop}>
-            <PhoneOff className="h-4 w-4" />
-            סיים שיחה
-          </Button>
-        )}
-        {active ? (
-          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Mic className="h-3.5 w-3.5" /> דברו באופן טבעי — אפשר גם להפריע לה באמצע.
-          </span>
-        ) : null}
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <label htmlFor="live-voice" className="text-muted-foreground">
-          קול:
-        </label>
-        <select
-          id="live-voice"
-          value={voice}
-          onChange={(e) => setVoice(e.target.value)}
-          disabled={active}
-          className="h-9 rounded-lg border border-input bg-background px-2 text-sm text-foreground disabled:opacity-50"
-        >
-          {VOICES.map((v) => (
-            <option key={v.name} value={v.name}>
-              {v.label}
-            </option>
-          ))}
-        </select>
-        {active ? <span className="text-xs text-muted-foreground">(הקול מתעדכן בשיחה הבאה)</span> : null}
       </div>
 
       {error ? (
