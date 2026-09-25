@@ -68,6 +68,13 @@ const { AZURE_SPEECH_KEY, AZURE_SPEECH_REGION } = process.env;
 const azureConfigured = Boolean(AZURE_SPEECH_KEY && AZURE_SPEECH_REGION);
 const xmlEscape = (s) =>
   String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+// Fix Hebrew abbreviations that TTS mispronounces. "חו״ל" (abroad) is otherwise
+// read like "חוֹל" (sand); shuruk niqqud makes it "חוּל". Handles gershayim and
+// plain quotes, with or without a prefix letter (ל/ב/מ/ה/ו/ש/כ).
+function normalizeHebrewTts(text) {
+  return String(text).replace(/([לבמהושכ]?)חו["'״″]ל/g, "$1חוּל");
+}
 let graphTok = null; // { token, expMs }
 async function graphToken() {
   if (graphTok && graphTok.expMs - 60_000 > Date.now()) return graphTok.token;
@@ -532,7 +539,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/tts/elevenlabs") {
       if (!elevenConfigured) return send(res, 501, { error: "eleven_not_configured" });
       const { text, voiceId } = await readJson(req);
-      const t = String(text || "").trim();
+      const t = normalizeHebrewTts(String(text || "").trim());
       const vid = String(voiceId || "").trim();
       if (!t || !vid) return send(res, 400, { error: "text + voiceId required" });
       const er = await fetch(
@@ -569,7 +576,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/tts/azure") {
       if (!azureConfigured) return send(res, 501, { error: "azure_tts_not_configured" });
       const { text, voiceName } = await readJson(req);
-      const t = String(text || "").trim();
+      const t = normalizeHebrewTts(String(text || "").trim());
       const voice = String(voiceName || "he-IL-HilaNeural").trim();
       if (!t) return send(res, 400, { error: "text required" });
       // Speak a touch faster than the default (tunable via AZURE_TTS_RATE).
