@@ -20,6 +20,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { GoogleGenAI } from "@google/genai";
+import { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import nodemailer from "nodemailer";
 
 const {
@@ -524,8 +527,121 @@ function readJson(req) {
   });
 }
 
+// ── MCP server ───────────────────────────────────────────────────────────────
+// Exposes the CRM as MCP tools so an xAI Voice Agent (Custom MCP server) can check
+// policies, take messages, etc. Each tool just calls our own HTTP endpoints, so
+// all the tested logic (OTP session, sanitization, email) is reused as-is.
+const { MCP_AUTH_TOKEN } = process.env;
+const mcpConfigured = Boolean(MCP_AUTH_TOKEN);
+
+async function mcpInternal(pathname, { method = "GET", body, session } = {}) {
+  const headers = { "content-type": "application/json" };
+  if (session) headers.authorization = `Bearer ${session}`;
+  const r = await fetch(`http://127.0.0.1:${LISTEN_PORT}${pathname}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const j = await r.json().catch(() => ({}));
+  return { status: r.status, ...j };
+}
+
+const MCP_TOOLS = [
+  { name: "send_policy_otp", description: "שולח קוד אימות ב-SMS ללקוח לפי תעודת הזהות, לפני חשיפת פרטי פוליסה.",
+    inputSchema: { type: "object", properties: { person_id: { type: "string", description: "מספר תעודת הזהות" } }, required: ["person_id"] } },
+  { name: "verify_policy_otp", description: "מאמת את קוד ה-SMS. בהצלחה מחזיר 'session' שיש להעביר לכלי הפוליסה.",
+    inputSchema: { type: "object", properties: { person_id: { type: "string" }, code: { type: "string", description: "הקוד בן 4-6 ספרות" } }, required: ["person_id", "code"] } },
+  { name: "get_my_policy", description: "מחזיר את פוליסות הלקוח המאומת. דורש session מ-verify_policy_otp.",
+    inputSchema: { type: "object", properties: { session: { type: "string" } }, required: ["session"] } },
+  { name: "get_policy_coverage", description: "מחזיר כיסויים/ריידרים של פוליסה. דורש session ו-policy_index.",
+    inputSchema: { type: "object", properties: { session: { type: "string" }, policy_index: { type: "string" } }, required: ["session", "policy_index"] } },
+  { name: "get_policy_members", description: "מחזיר את שמות המבוטחים על פוליסה. דורש session ו-policy_index.",
+    inputSchema: { type: "object", properties: { session: { type: "string" }, policy_index: { type: "string" } }, required: ["session", "policy_index"] } },
+  { name: "save_lead", description: "רושם פנייה של לקוח (שולח מייל למשרד) — להצעת מחיר או לביטוח רכב/דירה/עסקים.",
+    inputSchema: { type: "object", properties: { full_name: { type: "string" }, phone: { type: "string" }, topic: { type: "string" } }, required: ["full_name", "phone"] } },
+  { name: "check_agent_status", description: "בודק זמינות עובד: available (זמין) / busy (בשיחה) / away (לא נמצא).",
+    inputSchema: { type: "object", properties: { agent_name: { type: "string" } }, required: ["agent_name"] } },
+  { name: "contact_agent", description: "שולח מייל לעובד עם פרטי המתקשר (בקשת חזרה) כשהעובד לא זמין.",
+    inputSchema: { type: "object", properties: { agent_name: { type: "string" }, caller_name: { type: "string" }, caller_phone: { type: "string" }, reason: { type: "string" } }, required: ["agent_name", "caller_name", "caller_phone"] } },
+];
+
+async function runMcpTool(name, a = {}) {
+  switch (name) {
+    case "send_policy_otp": {
+      const r = await mcpInternal("/api/crm/otp/send", { method: "POST", body: { personId: a.person_id } });
+      return r.status === 200
+        ? { ok: true, phone_hint: r.phoneHint ?? null }
+        : { ok: false, error: 'לא הצלחתי לשלוח קוד. ייתכן שאין טלפון רשום על תעודת הזהות הזו.' };
+    }
+    case "verify_policy_otp": {
+      const r = await mcpInternal("/api/crm/otp/verify", { method: "POST", body: { personId: a.person_id, code: a.code } });
+      return r.token ? { ok: true, session: r.token } : { ok: false, error: "הקוד שגוי או פג תוקף." };
+    }
+    case "get_my_policy": {
+      const r = await mcpInternal("/api/crm/policy", { session: a.session });
+      if (r.status !== 200) return { ok: false, error: "נדרש אימות תקף." };
+      return { customer_name: r.customerName, count: r.count, policies: r.policies };
+    }
+    case "get_policy_coverage": {
+      const r = await mcpInternal(`/api/crm/policy/coverage?policyIndex=${encodeURIComponent(a.policy_index)}`, { session: a.session });
+      return { coverages: r.coverages ?? [] };
+    }
+    case "get_policy_members": {
+      const r = await mcpInternal(`/api/crm/policy/members?policyIndex=${encodeURIComponent(a.policy_index)}`, { session: a.session });
+      return { members: r.members ?? [] };
+    }
+    case "check_agent_status": {
+      const r = await mcpInternal(`/api/agents/status?agent=${encodeURIComponent(a.agent_name)}`);
+      return { status: r.status ?? "available" };
+    }
+    case "contact_agent": {
+      const r = await mcpInternal("/api/notify/agent", { method: "POST", body: { agent_name: a.agent_name, caller_name: a.caller_name, caller_phone: a.caller_phone, reason: a.reason } });
+      return { ok: true, emailed: Boolean(r.emailed) };
+    }
+    case "save_lead": {
+      const r = await mcpInternal("/api/notify/lead", { method: "POST", body: { full_name: a.full_name, phone: a.phone, topic: a.topic } });
+      return { ok: true, emailed: Boolean(r.emailed) };
+    }
+    default:
+      return { ok: false, error: `unknown tool: ${name}` };
+  }
+}
+
+function makeMcpServer() {
+  const s = new McpServer({ name: "ophir-crm", version: "1.0.0" }, { capabilities: { tools: {} } });
+  s.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: MCP_TOOLS }));
+  s.setRequestHandler(CallToolRequestSchema, async (req) => {
+    const result = await runMcpTool(req.params.name, req.params.arguments ?? {});
+    return { content: [{ type: "text", text: JSON.stringify(result) }] };
+  });
+  return s;
+}
+const mcpTransports = new Map(); // sessionId → SSEServerTransport
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${CRM_PROXY_PORT}`);
+
+  // ── MCP over SSE (for the xAI Voice Agent's Custom MCP server) ──
+  if (url.pathname === "/mcp/sse" && req.method === "GET") {
+    if (mcpConfigured && req.headers["x-mcp-token"] !== MCP_AUTH_TOKEN) {
+      res.writeHead(401).end("unauthorized");
+      return;
+    }
+    const transport = new SSEServerTransport("/mcp/messages", res);
+    mcpTransports.set(transport.sessionId, transport);
+    res.on("close", () => mcpTransports.delete(transport.sessionId));
+    await makeMcpServer().connect(transport);
+    return;
+  }
+  if (url.pathname === "/mcp/messages" && req.method === "POST") {
+    const transport = mcpTransports.get(url.searchParams.get("sessionId"));
+    if (!transport) {
+      res.writeHead(404).end("no such mcp session");
+      return;
+    }
+    await transport.handlePostMessage(req, res);
+    return;
+  }
   if (req.method === "OPTIONS") return send(res, 204, {});
 
   try {
@@ -779,6 +895,25 @@ const server = http.createServer(async (req, res) => {
         return send(res, 200, { ok: true, emailed: true, via: graphConfigured ? "graph" : "smtp" });
       } catch (e) {
         console.error("[mail] send failed:", e?.message ?? e);
+        return send(res, 200, { ok: false, emailed: false, error: String(e?.message ?? e) });
+      }
+    }
+
+    // Save a lead — emails it to the office inbox (used by the MCP save_lead tool).
+    if (req.method === "POST" && url.pathname === "/api/notify/lead") {
+      const { full_name, phone, topic } = await readJson(req);
+      const to = GRAPH_SENDER || SMTP_FROM || SMTP_USER;
+      if ((!graphConfigured && !mailer) || !to)
+        return send(res, 200, { ok: false, emailed: false, reason: "email_not_configured" });
+      const subject = `פנייה חדשה — ${full_name || "לקוח"}`;
+      const html = agentEmailHtml({ agentName: "צוות אופיר", callerName: full_name, callerPhone: phone, reason: topic || "פנייה כללית" });
+      const text = `פנייה חדשה שנרשמה בשיחה קולית:\n\nשם: ${full_name || "—"}\nטלפון: ${phone || "—"}\nנושא: ${topic || "—"}`;
+      try {
+        if (graphConfigured) await sendMailGraph(to, subject, html);
+        else await mailer.sendMail({ from: SMTP_FROM || SMTP_USER, to, subject, text, html });
+        return send(res, 200, { ok: true, emailed: true });
+      } catch (e) {
+        console.error("[mail] lead send failed:", e?.message ?? e);
         return send(res, 200, { ok: false, emailed: false, error: String(e?.message ?? e) });
       }
     }

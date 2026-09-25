@@ -46,3 +46,5 @@ services:
         sync: false
       - key: XAI_API_KEY
         sync: false
+      - key: MCP_AUTH_TOKEN
+        sync: false
