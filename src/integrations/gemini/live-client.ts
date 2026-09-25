@@ -172,8 +172,8 @@ export class DalitLiveSession {
               // than a normal mid-sentence breath, so she won't cut in early.
               startOfSpeechSensitivity: "START_SENSITIVITY_LOW" as any,
               endOfSpeechSensitivity: "END_SENSITIVITY_HIGH" as any,
-              prefixPaddingMs: 300,
-              silenceDurationMs: 550,
+              prefixPaddingMs: 250,
+              silenceDurationMs: 450,
             },
           },
         },

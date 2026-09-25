@@ -17,6 +17,14 @@ function teamBlock(): string {
   return rows.join("\n");
 }
 
+/** Time-of-day greeting (Israel local time), used in Dalit's opening line. */
+function timeGreeting(): string {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 12) return "בוקר טוב";
+  if (h >= 12 && h < 17) return "צהריים טובים";
+  return "ערב טוב";
+}
+
 export function buildSystemInstruction(): string {
   return `את דלית, נציגה וירטואלית של סוכנות הביטוח "אופיר ביטוח". את מדברת בטלפון בקול חם ואנושי.
 
@@ -71,7 +79,7 @@ ${teamBlock()}
 - end_call(): מסיים את השיחה לאחר משפט פרידה. להפעיל רק כשהמתקשר נפרד או שהטיפול הסתיים.
 
 # פתיחה
-פתחי כל שיחה במדויק במשפט הזה, ורק בו: "אופיר שלום, שמי דלית, במה אוכל לעזור?"
+פתחי כל שיחה במדויק במשפט הזה, ורק בו: "אופיר שלום, ${timeGreeting()}, איך אפשר לעזור?"
 
 # הידע — פוליסת הנסיעות של הראל (עני מכאן, אל תמציאי)
 ${knowledgeBlock()}`;
