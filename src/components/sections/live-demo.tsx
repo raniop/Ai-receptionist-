@@ -42,6 +42,14 @@ const AZURE_VOICES: { id: string; label: string }[] = [
 ];
 
 type Engine = "eleven" | "gemini" | "azure";
+type Brain = "gemini" | "flash" | "grok";
+
+// The "brain" — who generates Dalit's replies.
+const BRAINS: { id: Brain; label: string }[] = [
+  { id: "gemini", label: "Gemini Live · מובנה" },
+  { id: "flash", label: "Gemini Flash-Lite · מהיר" },
+  { id: "grok", label: "Grok · מהיר" },
+];
 
 type Line = { id: number; role: TranscriptRole; text: string };
 let lineId = 1;
@@ -68,14 +76,20 @@ export function LiveDemo() {
   const [error, setError] = useState<string | null>(null);
   const [voice, setVoice] = useState(() => lsGet("dalit:geminiVoice", "Callirrhoe"));
   const [fast, setFast] = useState(false);
-  const [engine, setEngine] = useState<Engine>(() => lsGet("dalit:engine", "eleven") as Engine);
+  const [engine, setEngine] = useState<Engine>(() => lsGet("dalit:engine", "azure") as Engine);
+  const [brain, setBrain] = useState<Brain>(() => lsGet("dalit:brain", "gemini") as Brain);
   const [elevenVoice, setElevenVoice] = useState(() => lsGet("dalit:elevenVoice", ELEVEN_VOICES[0].id));
   const [azureVoice, setAzureVoice] = useState(() => lsGet("dalit:azureVoice", AZURE_VOICES[0].id));
   const sessionRef = useRef<DalitLiveSession | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
+  // A text brain needs an external voice — Gemini's own voice only works with the
+  // Gemini brain. Fall back to Azure when the brain is Flash/Grok.
+  const effEngine: Engine = brain !== "gemini" && engine === "gemini" ? "azure" : engine;
+
   // Persist the engine/voice choices so a refresh keeps the last selection.
   useEffect(() => lsSet("dalit:engine", engine), [engine]);
+  useEffect(() => lsSet("dalit:brain", brain), [brain]);
   useEffect(() => lsSet("dalit:elevenVoice", elevenVoice), [elevenVoice]);
   useEffect(() => lsSet("dalit:azureVoice", azureVoice), [azureVoice]);
   useEffect(() => lsSet("dalit:geminiVoice", voice), [voice]);
@@ -109,8 +123,9 @@ export function LiveDemo() {
       },
       voice,
       fast,
-      engine,
-      engine === "azure" ? azureVoice : elevenVoice,
+      effEngine,
+      effEngine === "azure" ? azureVoice : elevenVoice,
+      brain,
     );
     sessionRef.current = s;
     void s.start();
@@ -184,30 +199,49 @@ export function LiveDemo() {
             </p>
           ) : null}
 
-          {/* Voice engine + voice picker on the glass */}
+          {/* Brain + voice engine + voice picker on the glass */}
           <div className="mt-4 flex flex-col items-center gap-2 text-xs" style={{ color: "#0b5e52" }}>
+            <div className="flex items-center gap-2">
+              <label htmlFor="live-brain" className="font-semibold">
+                מוח:
+              </label>
+              <select
+                id="live-brain"
+                value={brain}
+                onChange={(e) => setBrain(e.target.value as Brain)}
+                disabled={active}
+                className="h-8 rounded-lg px-2 text-xs font-medium disabled:opacity-50"
+                style={{ background: "rgba(255,255,255,0.7)", color: "#0b3c34", border: "1px solid rgba(255,255,255,0.7)" }}
+              >
+                {BRAINS.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.label}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="flex items-center gap-2">
               <label htmlFor="live-engine" className="font-semibold">
                 מנוע קול:
               </label>
               <select
                 id="live-engine"
-                value={engine}
+                value={effEngine}
                 onChange={(e) => setEngine(e.target.value as Engine)}
                 disabled={active}
                 className="h-8 rounded-lg px-2 text-xs font-medium disabled:opacity-50"
                 style={{ background: "rgba(255,255,255,0.7)", color: "#0b3c34", border: "1px solid rgba(255,255,255,0.7)" }}
               >
-                <option value="eleven">ElevenLabs · עברית טבעית</option>
                 <option value="azure">Azure · עברית ילידית</option>
-                <option value="gemini">Gemini · מובנה</option>
+                <option value="eleven">ElevenLabs · עברית טבעית</option>
+                {brain === "gemini" ? <option value="gemini">Gemini · מובנה</option> : null}
               </select>
             </div>
             <div className="flex items-center gap-2">
               <label htmlFor="live-voice" className="font-semibold">
                 קול:
               </label>
-              {engine === "azure" ? (
+              {effEngine === "azure" ? (
                 <select
                   id="live-voice"
                   value={azureVoice}
@@ -222,7 +256,7 @@ export function LiveDemo() {
                     </option>
                   ))}
                 </select>
-              ) : engine === "eleven" ? (
+              ) : effEngine === "eleven" ? (
                 <select
                   id="live-voice"
                   value={elevenVoice}

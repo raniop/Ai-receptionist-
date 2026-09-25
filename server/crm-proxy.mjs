@@ -39,6 +39,117 @@ const {
 // to Google directly — the real API key never leaves the server.
 const genai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 
+// "Brain" options: a fast TEXT LLM answers instead of Gemini Live, so Dalit can
+// reply much quicker (Gemini Live spends seconds generating audio we discard).
+const { XAI_API_KEY } = process.env;
+const BRAIN_FLASH_MODEL = process.env.BRAIN_FLASH_MODEL || "gemini-flash-lite-latest";
+const BRAIN_GROK_MODEL = process.env.BRAIN_GROK_MODEL || "grok-4.20-0309-non-reasoning";
+
+// Gemini tool declarations use UPPERCASE types; OpenAI/xAI want lowercase JSON Schema.
+function lowerSchema(s) {
+  if (!s || typeof s !== "object") return s;
+  const out = Array.isArray(s) ? [] : {};
+  for (const [k, v] of Object.entries(s)) {
+    if (k === "type" && typeof v === "string") out[k] = v.toLowerCase();
+    else if (v && typeof v === "object") out[k] = lowerSchema(v);
+    else out[k] = v;
+  }
+  return out;
+}
+
+/** One brain turn. `messages` is our neutral history; returns {calls} or {text}. */
+async function runBrain({ provider, system, messages, tools }) {
+  if (provider === "grok") {
+    if (!XAI_API_KEY) throw new Error("xai_not_configured");
+    const oaMsgs = [{ role: "system", content: system }];
+    for (const m of messages) {
+      if (m.role === "user") oaMsgs.push({ role: "user", content: m.text || "" });
+      else if (m.role === "tool")
+        oaMsgs.push({ role: "tool", tool_call_id: m.id, content: JSON.stringify(m.result ?? {}) });
+      else if (m.role === "assistant") {
+        if (m.calls?.length)
+          oaMsgs.push({
+            role: "assistant",
+            content: m.text || null,
+            tool_calls: m.calls.map((c) => ({
+              id: c.id,
+              type: "function",
+              function: { name: c.name, arguments: JSON.stringify(c.args ?? {}) },
+            })),
+          });
+        else oaMsgs.push({ role: "assistant", content: m.text || "" });
+      }
+    }
+    const oaTools = (tools || []).map((t) => ({
+      type: "function",
+      function: { name: t.name, description: t.description, parameters: lowerSchema(t.parameters) },
+    }));
+    const r = await fetch("https://api.x.ai/v1/chat/completions", {
+      method: "POST",
+      headers: { authorization: `Bearer ${XAI_API_KEY}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: BRAIN_GROK_MODEL, messages: oaMsgs, tools: oaTools.length ? oaTools : undefined }),
+    });
+    if (!r.ok) throw new Error(`grok ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    const j = await r.json();
+    const msg = j.choices?.[0]?.message ?? {};
+    if (msg.tool_calls?.length) {
+      return {
+        calls: msg.tool_calls.map((tc) => ({
+          id: tc.id,
+          name: tc.function?.name,
+          args: safeJson(tc.function?.arguments),
+        })),
+      };
+    }
+    return { text: msg.content || "" };
+  }
+
+  // default: Gemini flash-lite
+  if (!genai) throw new Error("gemini_not_configured");
+  const contents = [];
+  for (const m of messages) {
+    if (m.role === "user") contents.push({ role: "user", parts: [{ text: m.text || "" }] });
+    else if (m.role === "tool")
+      contents.push({ role: "user", parts: [{ functionResponse: { name: m.name, response: m.result ?? {} } }] });
+    else if (m.role === "assistant") {
+      if (m.calls?.length)
+        contents.push({
+          role: "model",
+          // Gemini requires its thought_signature echoed back with the functionCall.
+          parts: m.calls.map((c) => ({
+            functionCall: { name: c.name, args: c.args ?? {} },
+            ...(c.sig ? { thoughtSignature: c.sig } : {}),
+          })),
+        });
+      else contents.push({ role: "model", parts: [{ text: m.text || "" }] });
+    }
+  }
+  const res = await genai.models.generateContent({
+    model: BRAIN_FLASH_MODEL,
+    config: { systemInstruction: system, ...(tools?.length ? { tools: [{ functionDeclarations: tools }] } : {}) },
+    contents,
+  });
+  const parts = res.candidates?.[0]?.content?.parts ?? [];
+  const calls = parts.filter((p) => p.functionCall).map((p) => ({
+    id: p.functionCall.id || ref("call"),
+    name: p.functionCall.name,
+    args: p.functionCall.args ?? {},
+    sig: p.thoughtSignature, // echoed back on the next turn (Gemini requirement)
+  }));
+  if (calls.length) return { calls };
+  return { text: res.text || parts.map((p) => p.text || "").join("") };
+}
+function safeJson(s) {
+  try {
+    return JSON.parse(s || "{}");
+  } catch {
+    return {};
+  }
+}
+function ref(p) {
+  return `${p}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
 // SMTP (Office 365) — Dalit emails a team member when she takes a message for them.
 const { SMTP_HOST, SMTP_PORT = "587", SMTP_USER, SMTP_PASS, SMTP_FROM } = process.env;
 const mailer =
@@ -533,6 +644,20 @@ const server = http.createServer(async (req, res) => {
         },
       });
       return send(res, 200, { token: t.name, model: GEMINI_LIVE_MODEL });
+    }
+
+    // Brain — a fast text LLM (Gemini Flash-Lite or Grok) answers a turn. The
+    // browser drives the tool loop (tools run there, against the OTP session).
+    if (req.method === "POST" && url.pathname === "/api/brain") {
+      const { provider, system, messages, tools } = await readJson(req);
+      if (!system || !Array.isArray(messages)) return send(res, 400, { error: "system + messages required" });
+      try {
+        const out = await runBrain({ provider: provider === "grok" ? "grok" : "flash", system, messages, tools });
+        return send(res, 200, out);
+      } catch (e) {
+        console.error("[brain] failed:", e?.message ?? e);
+        return send(res, 502, { error: "brain_failed", detail: String(e?.message ?? e).slice(0, 160) });
+      }
     }
 
     // ElevenLabs TTS — the browser sends text, we speak it and stream MP3 back.

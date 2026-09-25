@@ -66,18 +66,29 @@ export class DalitLiveSession {
   private hangupAfterTts = false;
   private turnDone = false; // this Dalit turn's text is complete (external engines)
 
+  // "Brain": who generates Dalit's replies. "gemini" = Gemini Live itself; "flash"
+  // / "grok" = a fast text LLM (Gemini stays only as ears — STT + turn detection).
+  private brain: "gemini" | "flash" | "grok";
+  private history: any[] = []; // neutral message log for the brain
+  private callerBuf = ""; // caller's words for the turn in progress
+  private callerSpeaking = false;
+  private brainTriggered = false; // this caller turn already handed to the brain
+  private brainGen = 0; // bumped on barge-in so stale brain replies are dropped
+
   constructor(
     cb: LiveCallbacks,
     voice = "Callirrhoe",
     fast = false,
     engine: "gemini" | "eleven" | "azure" = "gemini",
     ttsVoice = "XrExE9yKIg1WjnnlVkGX",
+    brain: "gemini" | "flash" | "grok" = "gemini",
   ) {
     this.cb = cb;
     this.voice = voice;
     this.fast = fast;
     this.engine = engine;
     this.ttsVoice = ttsVoice;
+    this.brain = brain;
   }
 
   private set(s: LiveState) {
@@ -138,14 +149,19 @@ export class DalitLiveSession {
                 },
               }
             : {}),
-          tools: [{ functionDeclarations: TOOL_DECLARATIONS as any }],
-          // External TTS engines REQUIRE Dalit's words as text → always transcribe
-          // her output. "fast mode" only drops the caller-side transcript.
-          ...(this.engine !== "gemini"
-            ? { outputAudioTranscription: {}, ...(this.fast ? {} : { inputAudioTranscription: {} }) }
-            : this.fast
-              ? {}
-              : { inputAudioTranscription: {}, outputAudioTranscription: {} }),
+          // In brain mode Gemini is only listening, so it gets no tools (the brain
+          // owns tool-calling); otherwise Gemini needs them for its own answers.
+          ...(this.brain === "gemini" ? { tools: [{ functionDeclarations: TOOL_DECLARATIONS as any }] } : {}),
+          // Brain mode: Gemini is only our ears — we need the caller's words and
+          // detect end-of-turn from its first (discarded) audio, so no output
+          // transcription. External voice (no brain): transcribe Dalit's own words.
+          ...(this.brain !== "gemini"
+            ? { inputAudioTranscription: {} }
+            : this.engine !== "gemini"
+              ? { outputAudioTranscription: {}, ...(this.fast ? {} : { inputAudioTranscription: {} }) }
+              : this.fast
+                ? {}
+                : { inputAudioTranscription: {}, outputAudioTranscription: {} }),
           // Turn-taking: wait for a real pause before Dalit responds, so she doesn't
           // cut the caller off during natural mid-sentence pauses.
           realtimeInputConfig: {
@@ -177,16 +193,19 @@ export class DalitLiveSession {
       await this.startMic();
       this.set("listening");
 
-      // 5) answer the call — nudge Dalit to open with her greeting right away,
-      //    like a receptionist picking up the phone. (This text turn isn't
-      //    transcribed, so it doesn't show in the transcript.)
-      try {
-        this.session.sendClientContent({
-          turns: [{ role: "user", parts: [{ text: "(שיחה נכנסת — עני עכשיו ופתחי בברכת הפתיחה שלך.)" }] }],
-          turnComplete: true,
-        });
-      } catch {
-        /* session closing */
+      // 5) answer the call — open with the greeting. In brain mode the greeting
+      //    comes from the brain (Gemini is only listening); otherwise nudge Gemini.
+      if (this.brain !== "gemini") {
+        void this.runBrainTurn("(שיחה נכנסת — פתחי בברכת הפתיחה שלך.)");
+      } else {
+        try {
+          this.session.sendClientContent({
+            turns: [{ role: "user", parts: [{ text: "(שיחה נכנסת — עני עכשיו ופתחי בברכת הפתיחה שלך.)" }] }],
+            turnComplete: true,
+          });
+        } catch {
+          /* session closing */
+        }
       }
     } catch (e: any) {
       this.fail(String(e?.message ?? e));
@@ -224,6 +243,35 @@ export class DalitLiveSession {
 
   private onMessage(m: any) {
     const sc = m.serverContent;
+
+    // Brain mode: Gemini is only our ears. Collect the caller's words; when Gemini
+    // begins its own (discarded) reply, that's the end-of-turn signal → run the brain.
+    if (this.brain !== "gemini") {
+      const inT = sc?.inputTranscription?.text;
+      if (inT) {
+        this.cb.onTranscript?.("caller", inT);
+        this.callerBuf += inT;
+        this.callerSpeaking = true;
+        this.brainTriggered = false;
+        this.endingCall = false;
+        this.hangupAfterTts = false;
+        this.brainGen++; // invalidate any in-flight brain reply
+        this.stopTts(); // barge-in: cut Dalit off the moment the caller speaks
+      }
+      const started =
+        Boolean(sc?.outputTranscription?.text) ||
+        (sc?.modelTurn?.parts ?? []).some((p: any) => p.inlineData?.data) ||
+        Boolean(sc?.turnComplete);
+      if (started && this.callerSpeaking && !this.brainTriggered && this.callerBuf.trim()) {
+        this.brainTriggered = true;
+        this.callerSpeaking = false;
+        const text = this.callerBuf.trim();
+        this.callerBuf = "";
+        void this.runBrainTurn(text);
+      }
+      return; // never play Gemini's audio or use its tools in brain mode
+    }
+
     // Barge-in: the caller talks over Dalit → drop whatever's queued/playing.
     if (sc?.interrupted) {
       this.stopPlayback();
@@ -306,6 +354,71 @@ export class DalitLiveSession {
 
     const calls = m.toolCall?.functionCalls;
     if (calls?.length) this.handleTools(calls);
+  }
+
+  // ── brain (fast text LLM) — Flash-Lite / Grok ────────────────────────────────
+  /** Run one Dalit turn through the text brain: LLM ↔ tools loop, then speak. */
+  private async runBrainTurn(userText: string) {
+    const gen = this.brainGen; // if the caller barges in, this changes → abort
+    this.set("thinking");
+    this.clearSilence();
+    this.history.push({ role: "user", text: userText });
+    try {
+      for (let hop = 0; hop < 6; hop++) {
+        const out = await this.callBrain();
+        if (!this.active || gen !== this.brainGen) return; // stale — caller moved on
+        if (out.calls?.length) {
+          this.history.push({ role: "assistant", calls: out.calls });
+          for (const c of out.calls) {
+            if (c.name === "end_call") this.endingCall = true;
+            const result = await runTool(c.name, c.args ?? {});
+            this.history.push({ role: "tool", id: c.id, name: c.name, result });
+          }
+          if (!this.active || gen !== this.brainGen) return;
+          continue; // let the model use the tool results
+        }
+        const text = (out.text || "").trim();
+        this.history.push({ role: "assistant", text });
+        if (this.endingCall) this.hangupAfterTts = true;
+        if (!text) {
+          this.finishBrainTurn();
+          return;
+        }
+        this.cb.onTranscript?.("dalit", text);
+        this.turnDone = true;
+        this.ttsTextBuf = text;
+        this.flushSentences(true); // speak via Azure/ElevenLabs (streamed + prefetched)
+        if (!this.ttsDraining && this.ttsQueue.length === 0) this.finishBrainTurn();
+        return;
+      }
+    } catch (e: any) {
+      if (this.active) this.cb.onError?.(String(e?.message ?? e));
+      this.set("listening");
+    }
+  }
+
+  private finishBrainTurn() {
+    if (this.hangupAfterTts) {
+      this.cb.onTranscript?.("dalit", "— השיחה הסתיימה —");
+      this.stop();
+      return;
+    }
+    this.set("listening");
+  }
+
+  private async callBrain(): Promise<{ text?: string; calls?: any[] }> {
+    const r = await fetch("/api/brain", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        provider: this.brain,
+        system: buildSystemInstruction(),
+        messages: this.history,
+        tools: TOOL_DECLARATIONS,
+      }),
+    });
+    if (!r.ok) throw new Error(`brain ${r.status}`);
+    return r.json();
   }
 
   // ── external TTS pipeline (ElevenLabs / Azure) ───────────────────────────────
@@ -433,6 +546,7 @@ export class DalitLiveSession {
 
   private armSilence() {
     this.clearSilence();
+    if (this.brain !== "gemini") return; // silence check-in is a Gemini-mode nudge
     if (this.silenceCount >= 2) return; // already checked in + said goodbye
     this.silenceTimer = setTimeout(() => this.onSilence(), SILENCE_PROMPT_MS);
   }

@@ -44,3 +44,5 @@ services:
         sync: false
       - key: AZURE_SPEECH_REGION
         sync: false
+      - key: XAI_API_KEY
+        sync: false
