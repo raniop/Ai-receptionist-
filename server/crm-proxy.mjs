@@ -17,6 +17,8 @@
 import http from "node:http";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { GoogleGenAI } from "@google/genai";
 import nodemailer from "nodemailer";
 
@@ -25,6 +27,8 @@ const {
   CRM_USERNAME,
   CRM_PASSWORD,
   CRM_PROXY_PORT = "5055",
+  // Cloud hosts (Render/Railway/Fly…) inject the port to bind on as PORT.
+  PORT,
   CRM_SESSION_SECRET,
   CRM_ALLOW_ORIGIN = "http://localhost:5173",
   GEMINI_API_KEY,
@@ -336,6 +340,37 @@ function send(res, status, body) {
   res.end(data);
 }
 
+// ── static SPA hosting ───────────────────────────────────────────────────────
+// In production ONE service serves both the API and the built site (dist/), so
+// the browser talks to a single HTTPS origin and /api/* is same-origin. In dev
+// this folder doesn't exist and Vite serves the SPA instead — we just 404.
+const DIST_DIR = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../dist");
+const hasDist = fs.existsSync(path.join(DIST_DIR, "index.html"));
+const MIME = {
+  ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+  ".gif": "image/gif", ".webp": "image/webp", ".ico": "image/x-icon", ".woff": "font/woff",
+  ".woff2": "font/woff2", ".ttf": "font/ttf", ".map": "application/json; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8", ".webmanifest": "application/manifest+json",
+};
+function serveStatic(res, pathname) {
+  // Map the URL to a file inside dist/, blocking path traversal.
+  const rel = decodeURIComponent(pathname).replace(/^\/+/, "");
+  let filePath = path.resolve(DIST_DIR, rel);
+  const isAsset = filePath.startsWith(DIST_DIR) && rel !== "" && fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+  // Anything that isn't a real file is an SPA route → serve index.html.
+  if (!isAsset) filePath = path.join(DIST_DIR, "index.html");
+  const ext = path.extname(filePath).toLowerCase();
+  const body = fs.readFileSync(filePath);
+  res.writeHead(200, {
+    "content-type": MIME[ext] || "application/octet-stream",
+    // Fingerprinted assets can cache hard; index.html must always revalidate.
+    "cache-control": isAsset && /\/assets\//.test(filePath) ? "public, max-age=31536000, immutable" : "no-cache",
+  });
+  res.end(body);
+}
+
 function readJson(req) {
   return new Promise((resolve) => {
     let buf = "";
@@ -492,6 +527,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/api/crm/health") return send(res, 200, { ok: true });
+
+    // Unknown /api path → JSON 404. Anything else → the built SPA (prod only).
+    if (url.pathname.startsWith("/api/")) return send(res, 404, { error: "not_found" });
+    if (req.method === "GET" && hasDist) return serveStatic(res, url.pathname);
     return send(res, 404, { error: "not_found" });
   } catch (e) {
     console.error("[crm-proxy] error:", e?.message ?? e);
@@ -499,6 +538,10 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(Number(CRM_PROXY_PORT), () => {
-  console.log(`[crm-proxy] listening on http://localhost:${CRM_PROXY_PORT} → ${CRM_BASE_URL}`);
+const LISTEN_PORT = Number(PORT || CRM_PROXY_PORT);
+server.listen(LISTEN_PORT, () => {
+  console.log(
+    `[crm-proxy] listening on :${LISTEN_PORT} → ${CRM_BASE_URL}` +
+      (hasDist ? " (also serving dist/)" : " (API only; run Vite for the SPA)"),
+  );
 });

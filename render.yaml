@@ -1,0 +1,36 @@
+# Render.com blueprint — one web service that serves BOTH Dalit's site and its
+# secure API (server/crm-proxy.mjs). Deploy: render.com → New → Blueprint →
+# connect this repo. Render reads this file, then prompts for the secret values
+# below (sync: false = you paste them in the dashboard; they never live in git).
+services:
+  - type: web
+    name: ophir-dalit
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build:prod
+    startCommand: node server/crm-proxy.mjs
+    healthCheckPath: /api/crm/health
+    envVars:
+      # Non-secret defaults — fine to keep in git.
+      - key: GEMINI_LIVE_MODEL
+        value: gemini-3.8-live
+      - key: GRAPH_SENDER
+        value: Insurance@ophirins.co.il
+      # Secrets — paste these in the Render dashboard when prompted.
+      - key: CRM_BASE_URL
+        sync: false
+      - key: CRM_USERNAME
+        sync: false
+      - key: CRM_PASSWORD
+        sync: false
+      - key: CRM_SESSION_SECRET
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: AZURE_TENANT_ID
+        sync: false
+      - key: AZURE_CLIENT_ID
+        sync: false
+      - key: AZURE_CLIENT_SECRET
+        sync: false

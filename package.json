@@ -2,12 +2,17 @@
   "name": "vincen-react-template",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
-    "proxy": "node --env-file=.env server/crm-proxy.mjs"
+    "proxy": "node --env-file=.env server/crm-proxy.mjs",
+    "build:prod": "vite build --base=/",
+    "start": "node server/crm-proxy.mjs"
   },
   "dependencies": {
     "@floating-ui/react": "^0.27.20",
