@@ -364,28 +364,6 @@ async function crmFetch(path, init = {}, retry = true) {
   return res;
 }
 
-// ── OTP send limits: 3 codes per ID and 30 overall per 10 minutes ────────────
-const OTP_WINDOW_MS = 10 * 60_000;
-const OTP_PER_ID = 3;
-const OTP_GLOBAL = 30;
-const otpSends = new Map(); // personId → [timestamps]
-let otpGlobal = []; // timestamps
-function otpAllowed(personId) {
-  const now = Date.now();
-  const fresh = (list) => list.filter((t) => now - t < OTP_WINDOW_MS);
-  otpGlobal = fresh(otpGlobal);
-  for (const [k, v] of otpSends) {
-    const f = fresh(v);
-    if (f.length) otpSends.set(k, f);
-    else otpSends.delete(k);
-  }
-  const mine = otpSends.get(personId) ?? [];
-  if (mine.length >= OTP_PER_ID || otpGlobal.length >= OTP_GLOBAL) return false;
-  otpSends.set(personId, [...mine, now]);
-  otpGlobal.push(now);
-  return true;
-}
-
 // ── our short-lived customer session token (HMAC, scoped to one personId) ─────
 function signSession(personId) {
   const payload = Buffer.from(JSON.stringify({ personId, exp: Date.now() + SESSION_TTL_MS })).toString("base64url");
@@ -683,10 +661,9 @@ async function runMcpTool(name, a = {}) {
     case "send_policy_otp": {
       const r = await mcpInternal("/api/crm/otp/send", { method: "POST", body: { personId: a.person_id } });
       if (r.status === 200) prefetchBundle(a.person_id); // warm it while the caller reads the SMS
-      if (r.status === 200) return { ok: true, phone_hint: r.phoneHint ?? null };
-      if (r.status === 429)
-        return { ok: false, error: "כבר נשלחו כמה קודים לתעודת הזהות הזו. אפשר לנסות שוב בעוד כמה דקות, או להשאיר פנייה למשרד." };
-      return { ok: false, error: "לא הצלחתי לשלוח קוד. ייתכן שאין טלפון רשום על תעודת הזהות הזו." };
+      return r.status === 200
+        ? { ok: true, phone_hint: r.phoneHint ?? null }
+        : { ok: false, error: 'לא הצלחתי לשלוח קוד. ייתכן שאין טלפון רשום על תעודת הזהות הזו.' };
     }
     case "verify_policy_otp": {
       const r = await mcpInternal("/api/crm/otp/verify", { method: "POST", body: { personId: a.person_id, code: a.code } });
@@ -776,9 +753,6 @@ const server = http.createServer(async (req, res) => {
       const person = Array.isArray(rec) ? rec[0] : rec;
       const raw = person ? pick(person, ["mobile", "phone"]) : null;
       if (!raw) return send(res, 404, { error: "no_phone_on_file" });
-      // Anyone who calls can ask for a code, so cap the texts: per ID (a caller
-      // reading out a customer's ID can't flood their phone) and overall.
-      if (!otpAllowed(String(personId))) return send(res, 429, { error: "too_many_codes" });
       const phone = normalizePhone(raw);
       const r = await crmFetch("/api/Auth/sendotp", {
         method: "POST",
