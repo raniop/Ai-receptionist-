@@ -661,9 +661,14 @@ async function runMcpTool(name, a = {}) {
     case "send_policy_otp": {
       const r = await mcpInternal("/api/crm/otp/send", { method: "POST", body: { personId: a.person_id } });
       if (r.status === 200) prefetchBundle(a.person_id); // warm it while the caller reads the SMS
-      return r.status === 200
-        ? { ok: true, phone_hint: r.phoneHint ?? null }
-        : { ok: false, error: 'לא הצלחתי לשלוח קוד. ייתכן שאין טלפון רשום על תעודת הזהות הזו.' };
+      if (r.status === 200) return { ok: true, phone_hint: r.phoneHint ?? null };
+      if (r.error === "id_not_found")
+        return { ok: false, reason: "id_not_found", person_id_tried: a.person_id,
+          error: "לא נמצא לקוח עם תעודת הזהות הזו. ייתכן שהמספר נקלט לא נכון — הקריאי אותו ובקשי מהמתקשר לומר אותו שוב." };
+      if (r.error === "no_phone_on_file")
+        return { ok: false, reason: "no_phone_on_file",
+          error: "הלקוח נמצא, אבל אין אצלנו טלפון נייד תקין לשלוח אליו קוד. הציעי לרשום פנייה למשרד." };
+      return { ok: false, reason: "send_failed", error: "שליחת הקוד נכשלה כרגע. הציעי לנסות שוב או לרשום פנייה למשרד." };
     }
     case "verify_policy_otp": {
       const r = await mcpInternal("/api/crm/otp/verify", { method: "POST", body: { personId: a.person_id, code: a.code } });
@@ -751,9 +756,15 @@ const server = http.createServer(async (req, res) => {
       if (!pr.ok) return send(res, 502, { error: "lookup_failed" });
       const rec = await pr.json().catch(() => null);
       const person = Array.isArray(rec) ? rec[0] : rec;
-      const raw = person ? pick(person, ["mobile", "phone"]) : null;
-      if (!raw) return send(res, 404, { error: "no_phone_on_file" });
-      const phone = normalizePhone(raw);
+      // Unknown ID → the CRM answers 200 with {message:"No policies found…"} and a
+      // record full of nulls. Tell it apart from "found, but no usable phone" so
+      // Dalit can ask the caller to repeat a mistyped ID.
+      if (!person?.personId) return send(res, 404, { error: "id_not_found" });
+      // Only text a real Israeli mobile — some records hold junk like "972".
+      const phone = ["mobile", "phone"]
+        .map((k) => (person[k] ? normalizePhone(person[k]) : ""))
+        .find((p) => /^05\d{8}$/.test(p));
+      if (!phone) return send(res, 404, { error: "no_phone_on_file" });
       const r = await crmFetch("/api/Auth/sendotp", {
         method: "POST",
         headers: { "content-type": "application/json" },
