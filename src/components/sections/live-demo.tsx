@@ -35,6 +35,14 @@ const ELEVEN_VOICES: { id: string; label: string }[] = [
   { id: "pFZP5JQG7iQjIQuC4Bku", label: "Lily · צעיר" },
 ];
 
+// Azure Neural — native Hebrew voices (he-IL).
+const AZURE_VOICES: { id: string; label: string }[] = [
+  { id: "he-IL-HilaNeural", label: "Hila · אישה, ישראלי" },
+  { id: "he-IL-AvriNeural", label: "Avri · גבר, ישראלי" },
+];
+
+type Engine = "eleven" | "gemini" | "azure";
+
 type Line = { id: number; role: TranscriptRole; text: string };
 let lineId = 1;
 
@@ -44,8 +52,9 @@ export function LiveDemo() {
   const [error, setError] = useState<string | null>(null);
   const [voice, setVoice] = useState("Callirrhoe");
   const [fast, setFast] = useState(false);
-  const [engine, setEngine] = useState<"eleven" | "gemini">("eleven");
+  const [engine, setEngine] = useState<Engine>("eleven");
   const [elevenVoice, setElevenVoice] = useState(ELEVEN_VOICES[0].id);
+  const [azureVoice, setAzureVoice] = useState(AZURE_VOICES[0].id);
   const sessionRef = useRef<DalitLiveSession | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
@@ -77,7 +86,7 @@ export function LiveDemo() {
       voice,
       fast,
       engine,
-      elevenVoice,
+      engine === "azure" ? azureVoice : elevenVoice,
     );
     sessionRef.current = s;
     void s.start();
@@ -160,12 +169,13 @@ export function LiveDemo() {
               <select
                 id="live-engine"
                 value={engine}
-                onChange={(e) => setEngine(e.target.value as "eleven" | "gemini")}
+                onChange={(e) => setEngine(e.target.value as Engine)}
                 disabled={active}
                 className="h-8 rounded-lg px-2 text-xs font-medium disabled:opacity-50"
                 style={{ background: "rgba(255,255,255,0.7)", color: "#0b3c34", border: "1px solid rgba(255,255,255,0.7)" }}
               >
                 <option value="eleven">ElevenLabs · עברית טבעית</option>
+                <option value="azure">Azure · עברית ילידית</option>
                 <option value="gemini">Gemini · מובנה</option>
               </select>
             </div>
@@ -173,7 +183,22 @@ export function LiveDemo() {
               <label htmlFor="live-voice" className="font-semibold">
                 קול:
               </label>
-              {engine === "eleven" ? (
+              {engine === "azure" ? (
+                <select
+                  id="live-voice"
+                  value={azureVoice}
+                  onChange={(e) => setAzureVoice(e.target.value)}
+                  disabled={active}
+                  className="h-8 rounded-lg px-2 text-xs font-medium disabled:opacity-50"
+                  style={{ background: "rgba(255,255,255,0.7)", color: "#0b3c34", border: "1px solid rgba(255,255,255,0.7)" }}
+                >
+                  {AZURE_VOICES.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+              ) : engine === "eleven" ? (
                 <select
                   id="live-voice"
                   value={elevenVoice}

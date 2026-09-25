@@ -55,10 +55,10 @@ export class DalitLiveSession {
   private silenceCount = 0;
   private endingCall = false; // true once the goodbye is sent → hang up after it plays
 
-  // Voice engine: "gemini" = native speech-to-speech; "eleven" = Gemini thinks in
-  // TEXT and ElevenLabs speaks it (far more natural Hebrew).
-  private engine: "gemini" | "eleven";
-  private elevenVoiceId: string;
+  // Voice engine: "gemini" = native speech-to-speech; "eleven"/"azure" = Gemini
+  // thinks in TEXT and the provider speaks it (far more natural Hebrew).
+  private engine: "gemini" | "eleven" | "azure";
+  private ttsVoice: string; // ElevenLabs voiceId, or an Azure he-IL voice name
   private ttsQueue: string[] = [];
   private ttsDraining = false;
   private ttsSources = new Set<AudioBufferSourceNode>();
@@ -69,14 +69,14 @@ export class DalitLiveSession {
     cb: LiveCallbacks,
     voice = "Callirrhoe",
     fast = false,
-    engine: "gemini" | "eleven" = "gemini",
-    elevenVoiceId = "EXAVITQu4vr4xnSDxMaL",
+    engine: "gemini" | "eleven" | "azure" = "gemini",
+    ttsVoice = "XrExE9yKIg1WjnnlVkGX",
   ) {
     this.cb = cb;
     this.voice = voice;
     this.fast = fast;
     this.engine = engine;
-    this.elevenVoiceId = elevenVoiceId;
+    this.ttsVoice = ttsVoice;
   }
 
   private set(s: LiveState) {
@@ -107,10 +107,10 @@ export class DalitLiveSession {
         config: {
           // ElevenLabs engine → Gemini replies in TEXT (we speak it ourselves);
           // Gemini engine → native audio out.
-          responseModalities: this.engine === "eleven" ? [Modality.TEXT] : [Modality.AUDIO],
+          responseModalities: this.engine !== "gemini" ? [Modality.TEXT] : [Modality.AUDIO],
           systemInstruction: { parts: [{ text: buildSystemInstruction() }] },
           // speechConfig only matters for Gemini's own voice.
-          ...(this.engine === "eleven"
+          ...(this.engine !== "gemini"
             ? {}
             : {
                 speechConfig: {
@@ -124,7 +124,7 @@ export class DalitLiveSession {
           // only the caller's side needs transcribing.
           ...(this.fast
             ? {}
-            : this.engine === "eleven"
+            : this.engine !== "gemini"
               ? { inputAudioTranscription: {} }
               : { inputAudioTranscription: {}, outputAudioTranscription: {} }),
           // Turn-taking: wait for a real pause before Dalit responds, so she doesn't
@@ -202,7 +202,7 @@ export class DalitLiveSession {
     // Barge-in: the caller talks over Dalit → drop whatever's queued/playing.
     if (sc?.interrupted) {
       this.stopPlayback();
-      if (this.engine === "eleven") this.stopTts();
+      if (this.engine !== "gemini") this.stopTts();
     }
 
     const inT = sc?.inputTranscription?.text;
@@ -212,7 +212,7 @@ export class DalitLiveSession {
       this.silenceCount = 0;
       this.endingCall = false; // they're back — don't hang up
       // ElevenLabs barge-in: cut Dalit's speech the moment the caller starts.
-      if (this.engine === "eleven") {
+      if (this.engine !== "gemini") {
         this.stopTts();
         this.hangupAfterTts = false;
       }
@@ -222,7 +222,7 @@ export class DalitLiveSession {
 
     const parts = sc?.modelTurn?.parts ?? [];
     for (const p of parts) {
-      if (this.engine === "eleven") {
+      if (this.engine !== "gemini") {
         const txt = p.text;
         if (txt) {
           this.cb.onTranscript?.("dalit", txt);
@@ -240,7 +240,7 @@ export class DalitLiveSession {
     }
 
     if (sc?.turnComplete) {
-      if (this.engine === "eleven") {
+      if (this.engine !== "gemini") {
         this.flushSentences(true); // speak the tail of the turn
         if (this.endingCall) this.hangupAfterTts = true;
         // Nothing to speak this turn (e.g. only a tool call) → transition now.
@@ -333,10 +333,14 @@ export class DalitLiveSession {
 
   private async fetchTts(text: string): Promise<AudioBuffer | null> {
     if (!this.outputCtx) return null;
-    const r = await fetch("/api/tts/elevenlabs", {
+    const [endpoint, body] =
+      this.engine === "azure"
+        ? ["/api/tts/azure", { text, voiceName: this.ttsVoice }]
+        : ["/api/tts/elevenlabs", { text, voiceId: this.ttsVoice }];
+    const r = await fetch(endpoint, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text, voiceId: this.elevenVoiceId }),
+      body: JSON.stringify(body),
     });
     if (!r.ok) return null;
     const arr = await r.arrayBuffer();

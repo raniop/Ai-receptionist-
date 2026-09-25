@@ -62,6 +62,12 @@ const graphConfigured = Boolean(AZURE_TENANT_ID && AZURE_CLIENT_ID && AZURE_CLIE
 // key held here, and stream the audio back. Key never reaches the browser.
 const { ELEVENLABS_API_KEY, ELEVEN_MODEL = "eleven_flash_v2_5" } = process.env;
 const elevenConfigured = Boolean(ELEVENLABS_API_KEY);
+
+// Azure Neural TTS — native Hebrew voices (he-IL-HilaNeural / AvriNeural).
+const { AZURE_SPEECH_KEY, AZURE_SPEECH_REGION } = process.env;
+const azureConfigured = Boolean(AZURE_SPEECH_KEY && AZURE_SPEECH_REGION);
+const xmlEscape = (s) =>
+  String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 let graphTok = null; // { token, expMs }
 async function graphToken() {
   if (graphTok && graphTok.expMs - 60_000 > Date.now()) return graphTok.token;
@@ -550,6 +556,43 @@ const server = http.createServer(async (req, res) => {
         return send(res, 502, { error: "tts_failed", status: er.status });
       }
       const audio = Buffer.from(await er.arrayBuffer());
+      res.writeHead(200, {
+        "content-type": "audio/mpeg",
+        "content-length": audio.length,
+        "access-control-allow-origin": CRM_ALLOW_ORIGIN,
+        "cache-control": "no-store",
+      });
+      return res.end(audio);
+    }
+
+    // Azure Neural TTS — native Hebrew voice, returns MP3.
+    if (req.method === "POST" && url.pathname === "/api/tts/azure") {
+      if (!azureConfigured) return send(res, 501, { error: "azure_tts_not_configured" });
+      const { text, voiceName } = await readJson(req);
+      const t = String(text || "").trim();
+      const voice = String(voiceName || "he-IL-HilaNeural").trim();
+      if (!t) return send(res, 400, { error: "text required" });
+      const ssml =
+        `<speak version='1.0' xml:lang='he-IL'>` +
+        `<voice name='${xmlEscape(voice)}'>${xmlEscape(t)}</voice></speak>`;
+      const ar = await fetch(
+        `https://${AZURE_SPEECH_REGION}.tts.speech.microsoft.com/cognitiveservices/v1`,
+        {
+          method: "POST",
+          headers: {
+            "Ocp-Apim-Subscription-Key": AZURE_SPEECH_KEY,
+            "content-type": "application/ssml+xml",
+            "X-Microsoft-OutputFormat": "audio-24khz-96kbitrate-mono-mp3",
+            "User-Agent": "ophir-dalit",
+          },
+          body: ssml,
+        },
+      );
+      if (!ar.ok) {
+        console.error("[tts] azure failed:", ar.status, (await ar.text()).slice(0, 200));
+        return send(res, 502, { error: "azure_tts_failed", status: ar.status });
+      }
+      const audio = Buffer.from(await ar.arrayBuffer());
       res.writeHead(200, {
         "content-type": "audio/mpeg",
         "content-length": audio.length,
