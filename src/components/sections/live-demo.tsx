@@ -81,6 +81,7 @@ export function LiveDemo() {
   const ringsOn = state === "listening" || state === "speaking" || state === "thinking";
 
   return (
+    <>
     <div className="space-y-5">
       {/* Call stage — teal liquid-glass hero with the ripple orb */}
       <div className="dalit-stage">
@@ -228,5 +229,19 @@ export function LiveDemo() {
         </div>
       </section>
     </div>
+
+    {active ? (
+      <button
+        type="button"
+        onClick={stop}
+        aria-label="סיים שיחה"
+        className="fixed inset-x-0 bottom-5 z-50 mx-auto flex h-12 w-[min(20rem,calc(100%-2rem))] items-center justify-center gap-2 rounded-full text-[15px] font-bold text-white transition active:scale-[0.98]"
+        style={{ background: "#e11d48", boxShadow: "0 12px 30px rgba(225,29,72,0.4)" }}
+      >
+        <PhoneOff className="h-4 w-4" />
+        סיים שיחה
+      </button>
+    ) : null}
+    </>
   );
 }
