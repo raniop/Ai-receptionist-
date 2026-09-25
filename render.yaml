@@ -22,7 +22,7 @@ services:
       - key: ELEVEN_MODEL
         value: eleven_v3
       - key: XAI_AGENT_ID
-        value: agent_Aijk1DkYoh13cmRV
+        value: agent_05PtvAaUJRwLjJid
       # Secrets — paste these in the Render dashboard when prompted.
       - key: CRM_BASE_URL
         sync: false

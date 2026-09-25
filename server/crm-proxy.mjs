@@ -51,7 +51,7 @@ const genai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : nul
 // reply much quicker (Gemini Live spends seconds generating audio we discard).
 const { XAI_API_KEY } = process.env;
 // The published xAI Voice Agent to relay the browser to (its realtime WebSocket).
-const XAI_AGENT_ID = process.env.XAI_AGENT_ID || "agent_Aijk1DkYoh13cmRV";
+const XAI_AGENT_ID = process.env.XAI_AGENT_ID || "agent_05PtvAaUJRwLjJid";
 const BRAIN_FLASH_MODEL = process.env.BRAIN_FLASH_MODEL || "gemini-flash-lite-latest";
 const BRAIN_GROK_MODEL = process.env.BRAIN_GROK_MODEL || "grok-4.20-0309-non-reasoning";
 
