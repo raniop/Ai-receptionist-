@@ -555,22 +555,26 @@ async function mcpInternal(pathname, { method = "GET", body, session } = {}) {
   return { status: r.status, ...j };
 }
 
+// xAI exposes these to the voice model only through a search step
+// (search_connected_tools), and the model searches in ENGLISH — so each
+// description leads with English keywords, or the search misses (it returned
+// verify but not send, costing a second search round-trip).
 const MCP_TOOLS = [
-  { name: "send_policy_otp", description: "שולח קוד אימות ב-SMS ללקוח לפי תעודת הזהות, לפני חשיפת פרטי פוליסה.",
-    inputSchema: { type: "object", properties: { person_id: { type: "string", description: "מספר תעודת הזהות" } }, required: ["person_id"] } },
-  { name: "verify_policy_otp", description: "מאמת את קוד ה-SMS. בהצלחה מחזיר מיד את כל פרטי הלקוח: שם, הפוליסות, ולפוליסות הפעילות/האחרונות גם כיסויים (coverages) ושמות המבוטחים (members). אין צורך לקרוא לכלים נוספים אחרי זה — עני מתוך התוצאה.",
+  { name: "send_policy_otp", description: "STEP 1 of policy check / policy lookup: send SMS OTP verification code to the customer, identified by Israeli ID number (teudat zehut). Ask the caller for their ID number — NOT a phone number; the code goes to the phone on file. שולח קוד אימות ב-SMS לפי תעודת זהות.",
+    inputSchema: { type: "object", properties: { person_id: { type: "string", description: "Israeli ID number / מספר תעודת הזהות" } }, required: ["person_id"] } },
+  { name: "verify_policy_otp", description: "STEP 2 of policy check: verify the SMS OTP code the caller reads out. On success returns EVERYTHING — customer name, policies, and for active/latest policies their coverages (riders) and insured members. No other tool needed after this. מאמת את קוד ה-SMS ומחזיר את כל פרטי הפוליסה.",
     inputSchema: { type: "object", properties: { person_id: { type: "string" }, code: { type: "string", description: "הקוד בן 4-6 ספרות" } }, required: ["person_id", "code"] } },
-  { name: "get_my_policy", description: "מחזיר שוב את פוליסות הלקוח המאומת עם כיסויים ומבוטחים. בדרך כלל לא נחוץ — verify_policy_otp כבר מחזיר הכל. דורש session.",
+  { name: "get_my_policy", description: "Re-fetch the verified customer's policies with coverages and members (rarely needed — verify_policy_otp already returns everything). Requires session. מחזיר שוב את פוליסות הלקוח המאומת.",
     inputSchema: { type: "object", properties: { session: { type: "string" } }, required: ["session"] } },
-  { name: "get_policy_coverage", description: "כיסויים/ריידרים של פוליסה ישנה שלא הגיעה עם פרטים מלאים. דורש session ו-policy_index.",
+  { name: "get_policy_coverage", description: "Coverages / riders of an OLDER policy that came without details. Requires session and policy_index. כיסויים של פוליסה ישנה.",
     inputSchema: { type: "object", properties: { session: { type: "string" }, policy_index: { type: "string" } }, required: ["session", "policy_index"] } },
-  { name: "get_policy_members", description: "שמות המבוטחים על פוליסה ישנה שלא הגיעה עם פרטים מלאים. דורש session ו-policy_index.",
+  { name: "get_policy_members", description: "Insured member names on an OLDER policy that came without details. Requires session and policy_index. שמות המבוטחים בפוליסה ישנה.",
     inputSchema: { type: "object", properties: { session: { type: "string" }, policy_index: { type: "string" } }, required: ["session", "policy_index"] } },
-  { name: "save_lead", description: "רושם פנייה של לקוח (שולח מייל למשרד) — להצעת מחיר או לביטוח רכב/דירה/עסקים.",
+  { name: "save_lead", description: "Save a lead / leave a message for the office (emails the office): price quote request, or car/home/business insurance inquiry, or any callback request outside business hours. רושם פנייה של לקוח.",
     inputSchema: { type: "object", properties: { full_name: { type: "string" }, phone: { type: "string" }, topic: { type: "string" } }, required: ["full_name", "phone"] } },
-  { name: "check_agent_status", description: "בודק זמינות עובד: available (זמין) / busy (בשיחה) / away (לא נמצא).",
+  { name: "check_agent_status", description: "Check if a staff member / employee is available to take a call (transfer): available / busy (on a call) / away. בודק זמינות עובד.",
     inputSchema: { type: "object", properties: { agent_name: { type: "string" } }, required: ["agent_name"] } },
-  { name: "contact_agent", description: "שולח מייל לעובד עם פרטי המתקשר (בקשת חזרה) כשהעובד לא זמין.",
+  { name: "contact_agent", description: "Send a callback request / message by email to a specific staff member when they are unavailable, with the caller's name, phone and reason. שולח לעובד בקשת חזרה.",
     inputSchema: { type: "object", properties: { agent_name: { type: "string" }, caller_name: { type: "string" }, caller_phone: { type: "string" }, reason: { type: "string" } }, required: ["agent_name", "caller_name", "caller_phone"] } },
 ];
 

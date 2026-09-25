@@ -7,52 +7,6 @@ import type { LiveCallbacks, LiveState, TranscriptRole } from "@/integrations/ge
 
 const RATE = 24000; // xAI realtime PCM sample rate (in and out)
 
-// The model has no clock, so it guesses the time-of-day greeting (and gets it
-// wrong at night). Compute the real Jerusalem date/time in the browser and hand it
-// to the agent, together with whether the office is open and the exact opening line.
-// Business hours: Sunday–Thursday, 08:30–17:30 (Fri/Sat closed).
-const HE_DAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
-function jerusalemNow(): {
-  hhmm: string;
-  dayName: string;
-  greeting: string;
-  open: boolean;
-  opening: string;
-} {
-  const now = new Date();
-  let hour = now.getHours();
-  let minute = now.getMinutes();
-  let dayIdx = now.getDay();
-  let hhmm = "";
-  try {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone: "Asia/Jerusalem",
-      weekday: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).formatToParts(now);
-    const h = parts.find((p) => p.type === "hour")?.value;
-    const m = parts.find((p) => p.type === "minute")?.value;
-    const wd = parts.find((p) => p.type === "weekday")?.value;
-    if (h != null) hour = parseInt(h, 10) % 24;
-    if (m != null) minute = parseInt(m, 10);
-    const map: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-    if (wd != null && wd in map) dayIdx = map[wd];
-  } catch {
-    /* fall back to device local time */
-  }
-  hhmm = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
-  const greeting =
-    hour >= 5 && hour < 12 ? "בוקר טוב" : hour >= 12 && hour < 17 ? "צהריים טובים" : "ערב טוב";
-  const mins = hour * 60 + minute;
-  const open = dayIdx >= 0 && dayIdx <= 4 && mins >= 8 * 60 + 30 && mins < 17 * 60 + 30;
-  const opening = open
-    ? `אופיר שלום, ${greeting}, איך אפשר לעזור?`
-    : `אופיר שלום, ${greeting}. המשרד סגור כרגע, אבל אשמח לנסות לעזור — במה מדובר?`;
-  return { hhmm, dayName: HE_DAYS[dayIdx] ?? "", greeting, open, opening };
-}
-
 function int16ToBase64(int16: Int16Array): string {
   const bytes = new Uint8Array(int16.buffer);
   let bin = "";
@@ -145,25 +99,9 @@ export class GrokVoiceSession {
       return this.fail(String(e?.message ?? e));
     }
     this.set("listening");
-    // Inject the real Jerusalem date/time + open/closed status (the model has no
-    // clock) and dictate the exact opening line, then trigger the greeting.
-    const { hhmm, dayName, open, opening } = jerusalemNow();
-    const status = open
-      ? "המשרד פתוח כעת."
-      : "המשרד סגור כעת (שעות הפעילות: ראשון עד חמישי, 8:30–17:30). את עדיין יכולה לנסות לעזור, ואם צריך לרשום פנייה שנחזור אליה בשעות הפעילות.";
-    this.send({
-      type: "conversation.item.create",
-      item: {
-        type: "message",
-        role: "user",
-        content: [
-          {
-            type: "input_text",
-            text: `כעת יום ${dayName}, השעה בירושלים ${hhmm}. ${status} פתחי מיד את השיחה במשפט המדויק הזה, בלי שום תוספת ובלי להקריא את ההודעה הזאת: "${opening}"`,
-          },
-        ],
-      },
-    });
+    // Prompt the opening greeting. xAI appends the current Jerusalem time to the
+    // agent's instructions, so the time-of-day / after-hours greeting is decided
+    // there (agent sessions reject injected text items — "unimplemented").
     this.send({ type: "response.create" });
   }
 
