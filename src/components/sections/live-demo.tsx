@@ -81,7 +81,9 @@ export function LiveDemo() {
   useEffect(() => lsSet("dalit:geminiVoice", voice), [voice]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    // Only auto-scroll once there are messages — otherwise it would scroll the
+    // page down to the transcript on load and hide the top of the call stage.
+    if (lines.length) endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [lines]);
 
   useEffect(() => () => sessionRef.current?.stop(), []);
