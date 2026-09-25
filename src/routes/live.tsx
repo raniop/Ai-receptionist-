@@ -6,10 +6,7 @@ export const Route = createFileRoute("/live")({ component: LivePage });
 
 function LivePage() {
   return (
-    <main
-      className="min-h-screen w-full"
-      style={{ background: "linear-gradient(180deg, #ecfdf5 0%, #f6fbfa 32%, #f8fafc 100%)" }}
-    >
+    <main className="live-page min-h-screen w-full" style={{ background: "var(--lp-bg)" }}>
       <div className="mx-auto max-w-2xl px-5 py-10 sm:px-6">
         <FadeIn>
           <div className="text-center">
@@ -19,10 +16,10 @@ function LivePage() {
             >
               ✨ נציגה קולית חכמה
             </span>
-            <h1 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl" style={{ color: "#0f2a26" }}>
+            <h1 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl" style={{ color: "var(--lp-ink)" }}>
               דברו עם דלית
             </h1>
-            <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed" style={{ color: "#5b6b73" }}>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed" style={{ color: "var(--lp-sub)" }}>
               שאלו על ביטוח נסיעות לחו״ל, בדקו את הפוליסה שלכם או השאירו הודעה — בשיחה טבעית, בעברית.
             </p>
           </div>

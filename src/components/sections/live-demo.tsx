@@ -339,7 +339,7 @@ export function LiveDemo() {
             <span
               key={ex}
               className="rounded-full px-3.5 py-2 text-[13px]"
-              style={{ background: "#ffffff", border: "1px solid #d7ede8", color: "#0b5e52", boxShadow: "0 2px 8px rgba(6,60,52,0.05)" }}
+              style={{ background: "var(--lp-chip-bg)", border: "1px solid var(--lp-chip-border)", color: "var(--lp-ink)", boxShadow: "0 2px 8px rgba(6,60,52,0.05)" }}
             >
               {ex}
             </span>
@@ -355,21 +355,21 @@ export function LiveDemo() {
 
       <section
         className="flex min-h-[300px] flex-col rounded-2xl"
-        style={{ background: "#ffffff", border: "1px solid #e6efec", boxShadow: "0 10px 30px rgba(6,60,52,0.06)" }}
+        style={{ background: "var(--lp-card)", border: "1px solid var(--lp-card-border)", boxShadow: "0 10px 30px rgba(6,60,52,0.06)" }}
       >
-        <header className="flex items-center gap-2 px-5 py-3.5" style={{ borderBottom: "1px solid #eef4f2" }}>
+        <header className="flex items-center gap-2 px-5 py-3.5" style={{ borderBottom: "1px solid var(--lp-card-divider)" }}>
           <span
             className="h-2 w-2 rounded-full"
             style={{ background: active ? "#ef4444" : "#cbd5e1", animation: active ? "ophir-pulse-ring 1.4s infinite" : "none" }}
             aria-hidden="true"
           />
-          <p className="text-sm font-semibold" style={{ color: "#0f2a26" }}>
+          <p className="text-sm font-semibold" style={{ color: "var(--lp-ink)" }}>
             תמלול חי
           </p>
         </header>
         <div className="thread-scroll flex-1 space-y-3.5 overflow-y-auto px-5 py-4">
           {lines.length === 0 ? (
-            <p className="py-6 text-center text-sm" style={{ color: "#94a3b8" }}>
+            <p className="py-6 text-center text-sm" style={{ color: "var(--lp-empty)" }}>
               {fast
                 ? "מצב מהיר פעיל — התמלול כבוי לבדיקה. דלית תדבר כרגיל, בלי טקסט."
                 : 'לחצו "התחל שיחה", אשרו מיקרופון, ואמרו שלום 👋'}
@@ -387,7 +387,7 @@ export function LiveDemo() {
                     {me ? "א" : "ד"}
                   </span>
                   <div className="max-w-[80%]">
-                    <span className="mb-0.5 block text-[11px] font-semibold" style={{ color: "#5b6b73" }}>
+                    <span className="mb-0.5 block text-[11px] font-semibold" style={{ color: "var(--lp-sub)" }}>
                       {me ? "אתה" : "דלית"}
                     </span>
                     <div
@@ -395,7 +395,7 @@ export function LiveDemo() {
                       style={
                         me
                           ? { background: "#0f766e", color: "#fff", borderTopInlineStartRadius: 4 }
-                          : { background: "#ecfdf5", color: "#0f2a26", borderTopInlineEndRadius: 4 }
+                          : { background: "var(--lp-bubble-d-bg)", color: "var(--lp-bubble-d-ink)", borderTopInlineEndRadius: 4 }
                       }
                     >
                       {l.text}

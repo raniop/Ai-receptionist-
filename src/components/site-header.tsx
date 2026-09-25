@@ -11,22 +11,21 @@ export function SiteHeader() {
   const light = pathname === "/live";
 
   const link = light
-    ? "text-slate-500 hover:text-slate-900"
+    ? "lp-navlink"
     : "text-muted-foreground hover:text-foreground";
-  const linkActive = light ? "text-slate-900" : "text-foreground";
+  const linkActive = light ? "is-active" : "text-foreground";
   const pillBtn = light
-    ? "border-slate-300 text-slate-700 hover:border-teal-600 hover:text-teal-700"
+    ? "lp-pill"
     : "border-border text-foreground hover:border-primary hover:text-primary";
 
   return (
     <header
-      className={`sticky top-0 z-20 border-b backdrop-blur ${light ? "" : "border-border bg-background/85"}`}
-      style={light ? { background: "rgba(255,255,255,0.85)", borderColor: "#e2e8f0" } : undefined}
+      className={`sticky top-0 z-20 border-b backdrop-blur ${light ? "lp-nav" : "border-border bg-background/85"}`}
     >
       <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-5 py-3 sm:px-6">
         <Link
           to="/"
-          className={`font-display text-base font-semibold tracking-tight ${light ? "text-slate-900" : "text-foreground"}`}
+          className={`font-display text-base font-semibold tracking-tight ${light ? "lp-brand" : "text-foreground"}`}
         >
           {site.name}
         </Link>
