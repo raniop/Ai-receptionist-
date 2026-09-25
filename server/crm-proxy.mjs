@@ -572,9 +572,11 @@ const server = http.createServer(async (req, res) => {
       const t = String(text || "").trim();
       const voice = String(voiceName || "he-IL-HilaNeural").trim();
       if (!t) return send(res, 400, { error: "text required" });
+      // Speak a touch faster than the default (tunable via AZURE_TTS_RATE).
+      const rate = process.env.AZURE_TTS_RATE || "+8%";
       const ssml =
         `<speak version='1.0' xml:lang='he-IL'>` +
-        `<voice name='${xmlEscape(voice)}'>${xmlEscape(t)}</voice></speak>`;
+        `<voice name='${xmlEscape(voice)}'><prosody rate='${xmlEscape(rate)}'>${xmlEscape(t)}</prosody></voice></speak>`;
       const ar = await fetch(
         `https://${AZURE_SPEECH_REGION}.tts.speech.microsoft.com/cognitiveservices/v1`,
         {
