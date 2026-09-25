@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Mic, PhoneCall, PhoneOff } from "lucide-react";
+import { Mic, PhoneCall, PhoneOff, Settings } from "lucide-react";
 import {
   DalitLiveSession,
   type LiveState,
@@ -80,6 +80,7 @@ export function LiveDemo() {
   const [brain, setBrain] = useState<Brain>(() => lsGet("dalit:brain", "gemini") as Brain);
   const [elevenVoice, setElevenVoice] = useState(() => lsGet("dalit:elevenVoice", ELEVEN_VOICES[0].id));
   const [azureVoice, setAzureVoice] = useState(() => lsGet("dalit:azureVoice", AZURE_VOICES[0].id));
+  const [showSettings, setShowSettings] = useState(false);
   const sessionRef = useRef<DalitLiveSession | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
@@ -149,6 +150,20 @@ export function LiveDemo() {
         <span className="dalit-blob" style={{ width: 170, height: 170, background: "#7dd3fc", top: 4, insetInlineEnd: -40, opacity: 0.7 }} aria-hidden="true" />
         <span className="dalit-blob" style={{ width: 150, height: 150, background: "#34d399", bottom: -20, insetInlineStart: "34%", opacity: 0.6 }} aria-hidden="true" />
 
+        <button
+          type="button"
+          onClick={() => setShowSettings((s) => !s)}
+          aria-label="הגדרות"
+          className="absolute end-4 top-4 z-10 grid h-9 w-9 place-items-center rounded-full transition active:scale-95"
+          style={{
+            background: showSettings ? "rgba(15,118,110,0.9)" : "rgba(255,255,255,0.5)",
+            color: showSettings ? "#fff" : "#0b5e52",
+            border: "1px solid rgba(255,255,255,0.7)",
+          }}
+        >
+          <Settings className="h-4 w-4" />
+        </button>
+
         <div className="dalit-glass mx-auto max-w-sm">
           <div className={`dalit-orb ${active ? "is-breathing" : ""}`}>
             {ringsOn ? (
@@ -193,14 +208,18 @@ export function LiveDemo() {
             )}
           </div>
 
-          {active ? (
-            <p className="mt-3 flex items-center justify-center gap-1.5 text-xs font-medium" style={{ color: "#0b5e52" }}>
-              <Mic className="h-3.5 w-3.5" /> דברו באופן טבעי — אפשר גם להפריע לה באמצע.
-            </p>
-          ) : null}
+          <p className="mt-3 flex items-center justify-center gap-1.5 text-xs font-medium" style={{ color: "#0b5e52", opacity: 0.85 }}>
+            <Mic className="h-3.5 w-3.5" />
+            {active ? "דברו באופן טבעי — אפשר גם להפריע לה באמצע." : "מומלץ באוזניות · מדברים באופן טבעי"}
+          </p>
 
-          {/* Brain + voice engine + voice picker on the glass */}
-          <div className="mt-4 flex flex-col items-center gap-2 text-xs" style={{ color: "#0b5e52" }}>
+          {/* Advanced settings — hidden behind the ⚙ for everyday callers */}
+          {showSettings ? (
+          <>
+          <div
+            className="mt-4 flex flex-col items-center gap-2 rounded-xl px-3 py-3 text-xs"
+            style={{ color: "#0b5e52", background: "rgba(255,255,255,0.35)", border: "1px solid rgba(255,255,255,0.6)" }}
+          >
             <div className="flex items-center gap-2">
               <label htmlFor="live-brain" className="font-semibold">
                 מוח:
@@ -308,8 +327,25 @@ export function LiveDemo() {
             />
             מצב מהיר — בלי תמלול (לבדיקת מהירות תגובה)
           </label>
+          </>
+          ) : null}
         </div>
       </div>
+
+      {/* What can I ask — example prompts */}
+      {!active ? (
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          {["מה שעות הפעילות?", "בדיקת הפוליסה שלי", "ביטוח נסיעות לתאילנד", "מי מבוטח אצלי?", "לדבר עם נציג"].map((ex) => (
+            <span
+              key={ex}
+              className="rounded-full px-3.5 py-2 text-[13px]"
+              style={{ background: "#ffffff", border: "1px solid #d7ede8", color: "#0b5e52", boxShadow: "0 2px 8px rgba(6,60,52,0.05)" }}
+            >
+              {ex}
+            </span>
+          ))}
+        </div>
+      ) : null}
 
       {error ? (
         <p className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-400" role="status">
@@ -318,42 +354,56 @@ export function LiveDemo() {
       ) : null}
 
       <section
-        className="flex min-h-[340px] flex-col rounded-2xl"
-        style={{ background: "#ffffff", border: "1px solid #dbeee9", boxShadow: "0 8px 24px rgba(6,60,52,0.06)" }}
+        className="flex min-h-[300px] flex-col rounded-2xl"
+        style={{ background: "#ffffff", border: "1px solid #e6efec", boxShadow: "0 10px 30px rgba(6,60,52,0.06)" }}
       >
-        <header className="px-5 py-3" style={{ borderBottom: "1px solid #ecf3f1" }}>
+        <header className="flex items-center gap-2 px-5 py-3.5" style={{ borderBottom: "1px solid #eef4f2" }}>
+          <span
+            className="h-2 w-2 rounded-full"
+            style={{ background: active ? "#ef4444" : "#cbd5e1", animation: active ? "ophir-pulse-ring 1.4s infinite" : "none" }}
+            aria-hidden="true"
+          />
           <p className="text-sm font-semibold" style={{ color: "#0f2a26" }}>
             תמלול חי
           </p>
         </header>
-        <div className="thread-scroll flex-1 space-y-3 overflow-y-auto px-5 py-4">
+        <div className="thread-scroll flex-1 space-y-3.5 overflow-y-auto px-5 py-4">
           {lines.length === 0 ? (
-            <p className="text-sm" style={{ color: "#64748b" }}>
+            <p className="py-6 text-center text-sm" style={{ color: "#94a3b8" }}>
               {fast
-                ? 'מצב מהיר פעיל — התמלול כבוי לצורך הבדיקה. דלית תדבר כרגיל, פשוט בלי טקסט.'
-                : 'לחצו "התחל שיחה", אשרו מיקרופון, ואמרו שלום. דלית תענה בקול, בזמן אמת.'}
+                ? "מצב מהיר פעיל — התמלול כבוי לבדיקה. דלית תדבר כרגיל, בלי טקסט."
+                : 'לחצו "התחל שיחה", אשרו מיקרופון, ואמרו שלום 👋'}
             </p>
           ) : (
-            lines.map((l) => (
-              <div key={l.id} className="text-start">
-                <div
-                  className="inline-block max-w-[85%] rounded-xl px-3 py-2 text-sm"
-                  style={
-                    l.role === "caller"
-                      ? { background: "#f1f5f9", color: "#1a2233" }
-                      : { background: "#ccfbf1", color: "#0b3c34" }
-                  }
-                >
+            lines.map((l) => {
+              const me = l.role === "caller";
+              return (
+                <div key={l.id} className={`flex items-start gap-2.5 ${me ? "flex-row-reverse" : ""}`}>
                   <span
-                    className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide"
-                    style={{ color: l.role === "caller" ? "#64748b" : "#0f766e" }}
+                    className="grid h-7 w-7 flex-none place-items-center rounded-full text-[11px] font-bold text-white"
+                    style={{ background: me ? "#94a3b8" : "#0f766e" }}
+                    aria-hidden="true"
                   >
-                    {l.role === "caller" ? "מתקשר" : "דלית"}
+                    {me ? "א" : "ד"}
                   </span>
-                  {l.text}
+                  <div className="max-w-[80%]">
+                    <span className="mb-0.5 block text-[11px] font-semibold" style={{ color: "#5b6b73" }}>
+                      {me ? "אתה" : "דלית"}
+                    </span>
+                    <div
+                      className="inline-block rounded-2xl px-3.5 py-2 text-[14.5px] leading-relaxed"
+                      style={
+                        me
+                          ? { background: "#0f766e", color: "#fff", borderTopInlineStartRadius: 4 }
+                          : { background: "#ecfdf5", color: "#0f2a26", borderTopInlineEndRadius: 4 }
+                      }
+                    >
+                      {l.text}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
           <div ref={endRef} />
         </div>
