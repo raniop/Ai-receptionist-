@@ -144,8 +144,12 @@ export class DalitLiveSession {
         },
       });
 
-      // 3) audio out context (24 kHz)
-      this.outputCtx = new AudioContext({ sampleRate: OUTPUT_RATE });
+      // 3) audio out context. Gemini streams raw 24kHz PCM (needs a matching rate);
+      // for ElevenLabs/Azure we decode MP3, so use the device's native rate.
+      // resume() is required on iOS Safari, where a new context starts suspended.
+      this.outputCtx =
+        this.engine === "gemini" ? new AudioContext({ sampleRate: OUTPUT_RATE }) : new AudioContext();
+      await this.outputCtx.resume().catch(() => {});
       this.nextPlayTime = 0;
 
       // 4) mic capture → 16 kHz PCM → stream up
@@ -350,6 +354,7 @@ export class DalitLiveSession {
   private playBuffer(buffer: AudioBuffer): Promise<void> {
     return new Promise((resolve) => {
       if (!this.outputCtx) return resolve();
+      void this.outputCtx.resume().catch(() => {}); // keep iOS from silently pausing
       const node = this.outputCtx.createBufferSource();
       node.buffer = buffer;
       node.connect(this.outputCtx.destination);

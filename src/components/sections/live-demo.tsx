@@ -46,17 +46,39 @@ type Engine = "eleven" | "gemini" | "azure";
 type Line = { id: number; role: TranscriptRole; text: string };
 let lineId = 1;
 
+// Remember the caller's engine/voice choice across refreshes.
+function lsGet(key: string, fallback: string): string {
+  try {
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+function lsSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* ignore (private mode / blocked) */
+  }
+}
+
 export function LiveDemo() {
   const [state, setState] = useState<LiveState>("idle");
   const [lines, setLines] = useState<Line[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [voice, setVoice] = useState("Callirrhoe");
+  const [voice, setVoice] = useState(() => lsGet("dalit:geminiVoice", "Callirrhoe"));
   const [fast, setFast] = useState(false);
-  const [engine, setEngine] = useState<Engine>("eleven");
-  const [elevenVoice, setElevenVoice] = useState(ELEVEN_VOICES[0].id);
-  const [azureVoice, setAzureVoice] = useState(AZURE_VOICES[0].id);
+  const [engine, setEngine] = useState<Engine>(() => lsGet("dalit:engine", "eleven") as Engine);
+  const [elevenVoice, setElevenVoice] = useState(() => lsGet("dalit:elevenVoice", ELEVEN_VOICES[0].id));
+  const [azureVoice, setAzureVoice] = useState(() => lsGet("dalit:azureVoice", AZURE_VOICES[0].id));
   const sessionRef = useRef<DalitLiveSession | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+
+  // Persist the engine/voice choices so a refresh keeps the last selection.
+  useEffect(() => lsSet("dalit:engine", engine), [engine]);
+  useEffect(() => lsSet("dalit:elevenVoice", elevenVoice), [elevenVoice]);
+  useEffect(() => lsSet("dalit:azureVoice", azureVoice), [azureVoice]);
+  useEffect(() => lsSet("dalit:geminiVoice", voice), [voice]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
