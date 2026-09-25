@@ -6,9 +6,9 @@ import { signOut } from "@/integrations/neon/auth";
 export function SiteHeader() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
-  // The /live page is a light page, so the shared header goes light there too.
+  // The home page IS Dalit's (light) voice page, so the shared header goes light there.
   const { pathname } = useLocation();
-  const light = pathname === "/live";
+  const light = pathname === "/";
 
   const link = light
     ? "lp-navlink"
@@ -30,8 +30,8 @@ export function SiteHeader() {
           {site.name}
         </Link>
         <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
-          {/* On the voice page keep the nav focused on the AI-receptionist links. */}
-          {(light ? site.nav.filter((n) => ["/", "/test", "/live"].includes(n.to)) : site.nav).map((item) => (
+          {/* The home page is Dalit herself, so its nav links OUT to the other pages. */}
+          {(light ? site.nav.filter((n) => ["/quote", "/book", "/answers", "/about"].includes(n.to)) : site.nav).map((item) => (
             <Link
               key={item.to}
               to={item.to}
