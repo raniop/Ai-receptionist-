@@ -123,27 +123,27 @@ export class DalitLiveSession {
           onclose: () => {},
         },
         config: {
-          // ElevenLabs engine → Gemini replies in TEXT (we speak it ourselves);
-          // Gemini engine → native audio out.
-          responseModalities: this.engine !== "gemini" ? [Modality.TEXT] : [Modality.AUDIO],
+          // gemini-3.8-live only supports AUDIO responses (TEXT-only is rejected).
+          // So for ElevenLabs/Azure we still let Gemini speak, but we DON'T play its
+          // audio — we take the transcription of her words and speak that instead.
+          responseModalities: [Modality.AUDIO],
           systemInstruction: { parts: [{ text: buildSystemInstruction() }] },
-          // speechConfig only matters for Gemini's own voice.
-          ...(this.engine !== "gemini"
-            ? {}
-            : {
+          // speechConfig only matters when we actually play Gemini's own voice.
+          ...(this.engine === "gemini"
+            ? {
                 speechConfig: {
                   languageCode: "he-IL",
                   voiceConfig: { prebuiltVoiceConfig: { voiceName: this.voice } },
                 },
-              }),
+              }
+            : {}),
           tools: [{ functionDeclarations: TOOL_DECLARATIONS as any }],
-          // Transcription runs as a separate stream; "fast mode" drops it. In
-          // ElevenLabs mode we read Dalit's words from the text turn directly, so
-          // only the caller's side needs transcribing.
-          ...(this.fast
-            ? {}
-            : this.engine !== "gemini"
-              ? { inputAudioTranscription: {} }
+          // External TTS engines REQUIRE Dalit's words as text → always transcribe
+          // her output. "fast mode" only drops the caller-side transcript.
+          ...(this.engine !== "gemini"
+            ? { outputAudioTranscription: {}, ...(this.fast ? {} : { inputAudioTranscription: {} }) }
+            : this.fast
+              ? {}
               : { inputAudioTranscription: {}, outputAudioTranscription: {} }),
           // Turn-taking: wait for a real pause before Dalit responds, so she doesn't
           // cut the caller off during natural mid-sentence pauses.
@@ -241,19 +241,21 @@ export class DalitLiveSession {
         this.hangupAfterTts = false;
       }
     }
+    // Dalit's words. For external engines this transcription IS what we speak.
     const outT = sc?.outputTranscription?.text;
-    if (outT) this.cb.onTranscript?.("dalit", outT);
+    if (outT) {
+      this.cb.onTranscript?.("dalit", outT);
+      if (this.engine !== "gemini") {
+        this.ttsTextBuf += outT;
+        this.flushSentences(false);
+      }
+    }
 
     const parts = sc?.modelTurn?.parts ?? [];
     for (const p of parts) {
-      if (this.engine !== "gemini") {
-        const txt = p.text;
-        if (txt) {
-          this.cb.onTranscript?.("dalit", txt);
-          this.ttsTextBuf += txt;
-          this.flushSentences(false);
-        }
-      } else {
+      // Only the Gemini engine plays Gemini's audio; for ElevenLabs/Azure we
+      // discard it and speak the transcription (outT above) via the provider.
+      if (this.engine === "gemini") {
         const data = p.inlineData?.data;
         if (data) {
           this.set("speaking");
