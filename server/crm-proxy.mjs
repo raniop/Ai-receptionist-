@@ -20,6 +20,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { GoogleGenAI } from "@google/genai";
+import WsClient from "ws";
+const WebSocketServer = WsClient.WebSocketServer || WsClient.Server;
 import { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -45,6 +47,8 @@ const genai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : nul
 // "Brain" options: a fast TEXT LLM answers instead of Gemini Live, so Dalit can
 // reply much quicker (Gemini Live spends seconds generating audio we discard).
 const { XAI_API_KEY } = process.env;
+// The published xAI Voice Agent to relay the browser to (its realtime WebSocket).
+const XAI_AGENT_ID = process.env.XAI_AGENT_ID || "agent_Aijk1DkYoh13cmRV";
 const BRAIN_FLASH_MODEL = process.env.BRAIN_FLASH_MODEL || "gemini-flash-lite-latest";
 const BRAIN_GROK_MODEL = process.env.BRAIN_GROK_MODEL || "grok-4.20-0309-non-reasoning";
 
@@ -928,6 +932,45 @@ const server = http.createServer(async (req, res) => {
     console.error("[crm-proxy] error:", e?.message ?? e);
     return send(res, 500, { error: "server_error" });
   }
+});
+
+// ── Grok Voice relay ─────────────────────────────────────────────────────────
+// The browser can't put our xAI key on a WebSocket, so it connects here and we
+// relay it to the xAI Voice Agent realtime API with the key held server-side.
+const grokWss = new WebSocketServer({ noServer: true });
+server.on("upgrade", (req, socket, head) => {
+  const { pathname } = new URL(req.url, "http://localhost");
+  if (pathname !== "/api/grok/realtime") return socket.destroy();
+  if (!XAI_API_KEY) return socket.destroy();
+  grokWss.handleUpgrade(req, socket, head, (browserWs) => {
+    const upstream = new WsClient(`wss://api.x.ai/v1/realtime?agent_id=${encodeURIComponent(XAI_AGENT_ID)}`, {
+      headers: { Authorization: `Bearer ${XAI_API_KEY}` },
+    });
+    const queue = [];
+    upstream.on("open", () => {
+      for (const m of queue) upstream.send(m);
+      queue.length = 0;
+    });
+    browserWs.on("message", (m) => {
+      const s = m.toString();
+      if (upstream.readyState === WsClient.OPEN) upstream.send(s);
+      else queue.push(s);
+    });
+    upstream.on("message", (m) => {
+      if (browserWs.readyState === browserWs.OPEN) browserWs.send(m.toString());
+    });
+    const closeBoth = () => {
+      try { browserWs.close(); } catch {}
+      try { upstream.close(); } catch {}
+    };
+    browserWs.on("close", closeBoth);
+    upstream.on("close", closeBoth);
+    browserWs.on("error", closeBoth);
+    upstream.on("error", (e) => {
+      console.error("[grok relay] upstream error:", String(e?.message ?? e).slice(0, 140));
+      closeBoth();
+    });
+  });
 });
 
 const LISTEN_PORT = Number(PORT || CRM_PROXY_PORT);

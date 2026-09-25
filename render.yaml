@@ -21,6 +21,8 @@ services:
         value: Insurance@ophirins.co.il
       - key: ELEVEN_MODEL
         value: eleven_v3
+      - key: XAI_AGENT_ID
+        value: agent_Aijk1DkYoh13cmRV
       # Secrets — paste these in the Render dashboard when prompted.
       - key: CRM_BASE_URL
         sync: false

@@ -5,6 +5,7 @@ import {
   type LiveState,
   type TranscriptRole,
 } from "@/integrations/gemini/live-client";
+import { GrokVoiceSession } from "@/integrations/grok/voice-client";
 
 const STATE_META: Record<LiveState, { label: string; dot: string }> = {
   idle: { label: "מוכנה", dot: "#64748b" },
@@ -42,13 +43,14 @@ const AZURE_VOICES: { id: string; label: string }[] = [
 ];
 
 type Engine = "eleven" | "gemini" | "azure";
-type Brain = "gemini" | "flash" | "grok";
+type Brain = "gemini" | "flash" | "grok" | "grokvoice";
 
 // The "brain" — who generates Dalit's replies.
 const BRAINS: { id: Brain; label: string }[] = [
+  { id: "grokvoice", label: "Grok Voice · ישיר 🎙️" },
   { id: "gemini", label: "Gemini Live · מובנה" },
   { id: "flash", label: "Gemini Flash-Lite · מהיר" },
-  { id: "grok", label: "Grok · מהיר" },
+  { id: "grok", label: "Grok · מהיר (טקסט)" },
 ];
 
 type Line = { id: number; role: TranscriptRole; text: string };
@@ -77,11 +79,11 @@ export function LiveDemo() {
   const [voice, setVoice] = useState(() => lsGet("dalit:geminiVoice", "Callirrhoe"));
   const [fast, setFast] = useState(false);
   const [engine, setEngine] = useState<Engine>(() => lsGet("dalit:engine", "gemini") as Engine);
-  const [brain, setBrain] = useState<Brain>(() => lsGet("dalit:brain", "gemini") as Brain);
+  const [brain, setBrain] = useState<Brain>(() => lsGet("dalit:brain", "grokvoice") as Brain);
   const [elevenVoice, setElevenVoice] = useState(() => lsGet("dalit:elevenVoice", ELEVEN_VOICES[0].id));
   const [azureVoice, setAzureVoice] = useState(() => lsGet("dalit:azureVoice", AZURE_VOICES[0].id));
   const [showSettings, setShowSettings] = useState(false);
-  const sessionRef = useRef<DalitLiveSession | null>(null);
+  const sessionRef = useRef<DalitLiveSession | GrokVoiceSession | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   // A text brain needs an external voice — Gemini's own voice only works with the
@@ -116,18 +118,17 @@ export function LiveDemo() {
   function start() {
     setError(null);
     setLines([]);
-    const s = new DalitLiveSession(
-      {
-        onState: setState,
-        onTranscript: appendTranscript,
-        onError: (m) => setError(m),
-      },
-      voice,
-      fast,
-      effEngine,
-      effEngine === "azure" ? azureVoice : elevenVoice,
-      brain,
-    );
+    const cb = {
+      onState: setState,
+      onTranscript: appendTranscript,
+      onError: (m: string) => setError(m),
+    };
+    // "Grok Voice" is direct speech-to-speech via xAI; the others go through
+    // Gemini Live (as brain and/or ears) with a chosen voice engine.
+    const s =
+      brain === "grokvoice"
+        ? new GrokVoiceSession(cb)
+        : new DalitLiveSession(cb, voice, fast, effEngine, effEngine === "azure" ? azureVoice : elevenVoice, brain);
     sessionRef.current = s;
     void s.start();
   }
@@ -239,6 +240,8 @@ export function LiveDemo() {
                 ))}
               </select>
             </div>
+            {brain !== "grokvoice" ? (
+            <>
             <div className="flex items-center gap-2">
               <label htmlFor="live-engine" className="font-semibold">
                 מנוע קול:
@@ -307,8 +310,10 @@ export function LiveDemo() {
                 </select>
               )}
             </div>
+            </>
+            ) : null}
           </div>
-          {active ? (
+          {active && brain !== "grokvoice" ? (
             <p className="mt-1.5 text-[11px]" style={{ color: "#0b5e52", opacity: 0.75 }}>
               (הקול מתעדכן בשיחה הבאה)
             </p>

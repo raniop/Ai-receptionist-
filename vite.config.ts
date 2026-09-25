@@ -34,6 +34,11 @@ export default defineConfig({
         target: `http://localhost:${process.env.CRM_PROXY_PORT || 5055}`,
         changeOrigin: true,
       },
+      // Grok Voice realtime relay is a WebSocket upgrade.
+      "/api/grok/realtime": {
+        target: `ws://localhost:${process.env.CRM_PROXY_PORT || 5055}`,
+        ws: true,
+      },
     },
   },
 });
