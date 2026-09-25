@@ -142,6 +142,11 @@ export async function runTool(name: string, args: Record<string, any>): Promise<
       case "transfer_to_agent": {
         return { ok: true, message: "השיחה מועברת לנציג. בשעות הפעילות זה מיידי, אחרת נחזור בהקדם." };
       }
+      case "end_call": {
+        // The session layer watches for this tool and hangs up after Dalit's
+        // farewell finishes playing.
+        return { ok: true, ended: true };
+      }
       default:
         return { ok: false, error: `unknown tool: ${name}` };
     }

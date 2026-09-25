@@ -52,6 +52,7 @@ export class DalitLiveSession {
   private voice: string;
   private silenceTimer: ReturnType<typeof setTimeout> | null = null;
   private silenceCount = 0;
+  private endingCall = false; // true once the goodbye is sent → hang up after it plays
 
   constructor(cb: LiveCallbacks, voice = "Callirrhoe") {
     this.cb = cb;
@@ -171,6 +172,7 @@ export class DalitLiveSession {
       this.cb.onTranscript?.("caller", inT);
       this.clearSilence(); // the caller is talking — reset the check-in timer
       this.silenceCount = 0;
+      this.endingCall = false; // they're back — don't hang up
     }
     const outT = sc?.outputTranscription?.text;
     if (outT) this.cb.onTranscript?.("dalit", outT);
@@ -185,6 +187,19 @@ export class DalitLiveSession {
       }
     }
     if (sc?.turnComplete) {
+      if (this.endingCall) {
+        // That turn was her goodbye — let the audio finish, then hang up.
+        const remainingMs = this.outputCtx
+          ? Math.max(0, this.nextPlayTime - this.outputCtx.currentTime) * 1000
+          : 0;
+        setTimeout(() => {
+          if (this.active) {
+            this.cb.onTranscript?.("dalit", "— השיחה הסתיימה —");
+            this.stop();
+          }
+        }, remainingMs + 1200);
+        return;
+      }
       this.set("listening");
       this.armSilence(); // she's done — wait for the caller, or check back in
     }
@@ -210,10 +225,13 @@ export class DalitLiveSession {
     this.silenceTimer = null;
     if (!this.active || !this.session) return;
     this.silenceCount += 1;
+    // First silence → one gentle check-in. Still silent → a short goodbye, then
+    // the call auto-ends (endingCall makes turnComplete hang up after it plays).
+    if (this.silenceCount >= 2) this.endingCall = true;
     const nudge =
       this.silenceCount === 1
         ? "(המתקשר שקט זמן מה. בדקי בעדינות אם הוא עדיין על הקו ואם תוכלי לעזור בעוד משהו — בלי להניח שסיים או שאין לו שאלות.)"
-        : "(המתקשר עדיין שותק. הודי לו על הפנייה, אמרי שאנחנו כאן בכל עת, ואחלי יום טוב.)";
+        : "(המתקשר עדיין שותק. היפרדי ממנו קצר ובחום — הודי לו על הפנייה, אמרי שאנחנו כאן בכל עת ושיהיה יום טוב. זו סגירת השיחה.)";
     try {
       this.session.sendClientContent({
         turns: [{ role: "user", parts: [{ text: nudge }] }],
@@ -228,6 +246,8 @@ export class DalitLiveSession {
     this.set("thinking");
     const responses = [];
     for (const c of calls) {
+      // Caller said goodbye / done → hang up after her farewell turn plays.
+      if (c.name === "end_call") this.endingCall = true;
       const result = await runTool(c.name, c.args ?? {});
       responses.push({ id: c.id, name: c.name, response: result });
     }
