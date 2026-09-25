@@ -120,7 +120,7 @@ function agentEmailHtml({ agentName, callerName, callerPhone, reason }) {
     <tr><td align="center">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" dir="rtl" style="max-width:560px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);font-family:Arial,'Segoe UI',Helvetica,sans-serif;text-align:right;">
         <tr>
-          <td style="background:linear-gradient(135deg,#1e3a8a,#2563eb);padding:22px 28px;">
+          <td bgcolor="#1e3a8a" style="background-color:#1e3a8a;background:linear-gradient(135deg,#1e3a8a,#2563eb);padding:22px 28px;">
             <div style="color:#ffffff;font-size:19px;font-weight:700;">אופיר ביטוח</div>
             <div style="color:#bfdbfe;font-size:13px;margin-top:2px;">פנייה חדשה מדלית · הנציגה הקולית</div>
           </td>
