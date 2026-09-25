@@ -1,7 +1,7 @@
 // Executes the tools Dalit (Gemini Live) calls, by reusing the app's existing
 // integrations: the OTP-gated CRM proxy and the local leads store. Each returns a
 // plain object that we hand straight back to the model as the function response.
-import { sendOtp, verifyOtp, getMyPolicy, getPolicyCoverage } from "@/integrations/crm/client";
+import { sendOtp, verifyOtp, getMyPolicy, getPolicyCoverage, getPolicyMembers } from "@/integrations/crm/client";
 import { db } from "@/integrations/neon/client";
 import { staff, secretariat } from "@/content/site";
 import { getAgentStatus, STATUS_LABEL } from "@/integrations/agents/status";
@@ -80,6 +80,12 @@ export async function runTool(name: string, args: Record<string, any>): Promise<
         return coverages.length
           ? { coverages }
           : { coverages: [], note: "לא נמצאו כיסויים רשומים על הפוליסה הזו." };
+      }
+      case "get_policy_members": {
+        const members = await getPolicyMembers(String(args.policy_index ?? ""));
+        return members.length
+          ? { members, names: members.map((m) => m.name) }
+          : { members: [], note: "לא נמצאו מבוטחים נוספים על הפוליסה הזו." };
       }
       case "save_lead": {
         const reference = ref("OPH-L");

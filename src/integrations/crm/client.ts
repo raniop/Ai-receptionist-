@@ -84,6 +84,22 @@ export async function getPolicyCoverage(policyIndex: string | number): Promise<s
   return j.coverages ?? [];
 }
 
+export type PolicyMember = { name: string; is_me: boolean };
+
+/** The names of everyone insured on one of the verified customer's policies. */
+export async function getPolicyMembers(policyIndex: string | number): Promise<PolicyMember[]> {
+  if (!sessionToken) throw new Error("not_verified");
+  const r = await fetch(`${BASE}/api/crm/policy/members?policyIndex=${encodeURIComponent(String(policyIndex))}`, {
+    headers: { authorization: `Bearer ${sessionToken}` },
+  });
+  if (!r.ok) {
+    if (r.status === 401) sessionToken = null;
+    throw new Error("members_lookup_failed");
+  }
+  const j = (await r.json()) as { members: PolicyMember[] };
+  return j.members ?? [];
+}
+
 /** Forget the current verified session (call when a lookup conversation ends). */
 export function clearCrmSession(): void {
   sessionToken = null;

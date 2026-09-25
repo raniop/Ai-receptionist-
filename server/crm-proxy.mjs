@@ -309,6 +309,16 @@ function isActive(endDate) {
   return Number.isNaN(t) ? null : t >= Date.now();
 }
 
+/** Build a person's display name from whatever fields the CRM returns. */
+function personName(c) {
+  const full = pick(c, ["clientName", "fullName", "name", "customerName", "displayName"]);
+  if (full) return String(full).trim();
+  const first = pick(c, ["firstName", "privateName", "hebFirstName", "givenName", "first_name"]);
+  const last = pick(c, ["lastName", "familyName", "hebLastName", "surname", "last_name"]);
+  const combined = [first, last].filter(Boolean).join(" ").trim();
+  return combined || null;
+}
+
 function sanitizeLookup(raw) {
   const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
   const customerName = list[0] ? pick(list[0], ["clientName"]) : null;
@@ -464,6 +474,29 @@ const server = http.createServer(async (req, res) => {
         .map((rd) => pick(rd, ["riderName"]))
         .filter(Boolean);
       return send(res, 200, { coverages });
+    }
+
+    // Who else is insured on the verified caller's policy (names only, no IDs).
+    // Only served when the session's own personId is on that policy.
+    if (req.method === "GET" && url.pathname === "/api/crm/policy/members") {
+      const auth = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      const session = verifySession(auth);
+      if (!session) return send(res, 401, { error: "session_invalid_or_expired" });
+      const policyIndex = url.searchParams.get("policyIndex");
+      if (!policyIndex) return send(res, 400, { error: "policyIndex required" });
+      const r = await crmFetch(
+        `/api/Policy/GetPolicyCustomersDetailsByIndex?policyIndex=${encodeURIComponent(policyIndex)}`,
+      );
+      if (!r.ok) return send(res, 502, { error: "members_lookup_failed" });
+      const j = await r.json().catch(() => null);
+      const customers = Array.isArray(j?.customers) ? j.customers : [];
+      if (customers[0]) console.error("[members] customer keys:", Object.keys(customers[0]).join(","));
+      const me = customers.find((c) => String(c.personId) === String(session.personId));
+      if (!me) return send(res, 403, { error: "not_your_policy" });
+      const members = customers
+        .map((c) => ({ name: personName(c), is_me: String(c.personId) === String(session.personId) }))
+        .filter((m) => m.name);
+      return send(res, 200, { members });
     }
 
     // Mint a short-lived ephemeral token so the browser can open the Gemini Live
