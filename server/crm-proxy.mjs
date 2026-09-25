@@ -57,6 +57,11 @@ const mailer =
 // over SMTP when an Azure app registration is configured.
 const { AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, GRAPH_SENDER } = process.env;
 const graphConfigured = Boolean(AZURE_TENANT_ID && AZURE_CLIENT_ID && AZURE_CLIENT_SECRET);
+
+// ElevenLabs — natural Hebrew TTS. The browser sends text, we speak it with the
+// key held here, and stream the audio back. Key never reaches the browser.
+const { ELEVENLABS_API_KEY, ELEVEN_MODEL = "eleven_flash_v2_5" } = process.env;
+const elevenConfigured = Boolean(ELEVENLABS_API_KEY);
 let graphTok = null; // { token, expMs }
 async function graphToken() {
   if (graphTok && graphTok.expMs - 60_000 > Date.now()) return graphTok.token;
@@ -515,6 +520,43 @@ const server = http.createServer(async (req, res) => {
         },
       });
       return send(res, 200, { token: t.name, model: GEMINI_LIVE_MODEL });
+    }
+
+    // ElevenLabs TTS — the browser sends text, we speak it and stream MP3 back.
+    if (req.method === "POST" && url.pathname === "/api/tts/elevenlabs") {
+      if (!elevenConfigured) return send(res, 501, { error: "eleven_not_configured" });
+      const { text, voiceId } = await readJson(req);
+      const t = String(text || "").trim();
+      const vid = String(voiceId || "").trim();
+      if (!t || !vid) return send(res, 400, { error: "text + voiceId required" });
+      const er = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(vid)}?output_format=mp3_44100_128`,
+        {
+          method: "POST",
+          headers: {
+            "xi-api-key": ELEVENLABS_API_KEY,
+            "content-type": "application/json",
+            accept: "audio/mpeg",
+          },
+          body: JSON.stringify({
+            text: t,
+            model_id: ELEVEN_MODEL,
+            voice_settings: { stability: 0.45, similarity_boost: 0.8, style: 0, use_speaker_boost: true },
+          }),
+        },
+      );
+      if (!er.ok) {
+        console.error("[tts] elevenlabs failed:", er.status, (await er.text()).slice(0, 200));
+        return send(res, 502, { error: "tts_failed", status: er.status });
+      }
+      const audio = Buffer.from(await er.arrayBuffer());
+      res.writeHead(200, {
+        "content-type": "audio/mpeg",
+        "content-length": audio.length,
+        "access-control-allow-origin": CRM_ALLOW_ORIGIN,
+        "cache-control": "no-store",
+      });
+      return res.end(audio);
     }
 
     // Agent availability — read (Dalit's tool, and the admin panel) …

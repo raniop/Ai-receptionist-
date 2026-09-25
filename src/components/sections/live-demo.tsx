@@ -27,6 +27,14 @@ const VOICES: { name: string; label: string }[] = [
   { name: "Orus", label: "Orus · יציב" },
 ];
 
+// ElevenLabs voices (spoken via eleven_v3 — far more natural Hebrew).
+const ELEVEN_VOICES: { id: string; label: string }[] = [
+  { id: "XrExE9yKIg1WjnnlVkGX", label: "Matilda · חם ונעים" },
+  { id: "Xb7hH8MSUJpSbSDYk0k2", label: "Alice · ברור" },
+  { id: "EXAVITQu4vr4xnSDxMaL", label: "Sarah · רך" },
+  { id: "pFZP5JQG7iQjIQuC4Bku", label: "Lily · צעיר" },
+];
+
 type Line = { id: number; role: TranscriptRole; text: string };
 let lineId = 1;
 
@@ -36,6 +44,8 @@ export function LiveDemo() {
   const [error, setError] = useState<string | null>(null);
   const [voice, setVoice] = useState("Callirrhoe");
   const [fast, setFast] = useState(false);
+  const [engine, setEngine] = useState<"eleven" | "gemini">("eleven");
+  const [elevenVoice, setElevenVoice] = useState(ELEVEN_VOICES[0].id);
   const sessionRef = useRef<DalitLiveSession | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
@@ -66,6 +76,8 @@ export function LiveDemo() {
       },
       voice,
       fast,
+      engine,
+      elevenVoice,
     );
     sessionRef.current = s;
     void s.start();
@@ -139,25 +151,60 @@ export function LiveDemo() {
             </p>
           ) : null}
 
-          {/* Voice picker on the glass */}
-          <div className="mt-4 flex items-center justify-center gap-2 text-xs" style={{ color: "#0b5e52" }}>
-            <label htmlFor="live-voice" className="font-semibold">
-              קול:
-            </label>
-            <select
-              id="live-voice"
-              value={voice}
-              onChange={(e) => setVoice(e.target.value)}
-              disabled={active}
-              className="h-8 rounded-lg px-2 text-xs font-medium disabled:opacity-50"
-              style={{ background: "rgba(255,255,255,0.7)", color: "#0b3c34", border: "1px solid rgba(255,255,255,0.7)" }}
-            >
-              {VOICES.map((v) => (
-                <option key={v.name} value={v.name}>
-                  {v.label}
-                </option>
-              ))}
-            </select>
+          {/* Voice engine + voice picker on the glass */}
+          <div className="mt-4 flex flex-col items-center gap-2 text-xs" style={{ color: "#0b5e52" }}>
+            <div className="flex items-center gap-2">
+              <label htmlFor="live-engine" className="font-semibold">
+                מנוע קול:
+              </label>
+              <select
+                id="live-engine"
+                value={engine}
+                onChange={(e) => setEngine(e.target.value as "eleven" | "gemini")}
+                disabled={active}
+                className="h-8 rounded-lg px-2 text-xs font-medium disabled:opacity-50"
+                style={{ background: "rgba(255,255,255,0.7)", color: "#0b3c34", border: "1px solid rgba(255,255,255,0.7)" }}
+              >
+                <option value="eleven">ElevenLabs · עברית טבעית</option>
+                <option value="gemini">Gemini · מובנה</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <label htmlFor="live-voice" className="font-semibold">
+                קול:
+              </label>
+              {engine === "eleven" ? (
+                <select
+                  id="live-voice"
+                  value={elevenVoice}
+                  onChange={(e) => setElevenVoice(e.target.value)}
+                  disabled={active}
+                  className="h-8 rounded-lg px-2 text-xs font-medium disabled:opacity-50"
+                  style={{ background: "rgba(255,255,255,0.7)", color: "#0b3c34", border: "1px solid rgba(255,255,255,0.7)" }}
+                >
+                  {ELEVEN_VOICES.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <select
+                  id="live-voice"
+                  value={voice}
+                  onChange={(e) => setVoice(e.target.value)}
+                  disabled={active}
+                  className="h-8 rounded-lg px-2 text-xs font-medium disabled:opacity-50"
+                  style={{ background: "rgba(255,255,255,0.7)", color: "#0b3c34", border: "1px solid rgba(255,255,255,0.7)" }}
+                >
+                  {VOICES.map((v) => (
+                    <option key={v.name} value={v.name}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
           </div>
           {active ? (
             <p className="mt-1.5 text-[11px]" style={{ color: "#0b5e52", opacity: 0.75 }}>

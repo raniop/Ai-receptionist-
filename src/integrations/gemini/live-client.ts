@@ -55,10 +55,28 @@ export class DalitLiveSession {
   private silenceCount = 0;
   private endingCall = false; // true once the goodbye is sent → hang up after it plays
 
-  constructor(cb: LiveCallbacks, voice = "Callirrhoe", fast = false) {
+  // Voice engine: "gemini" = native speech-to-speech; "eleven" = Gemini thinks in
+  // TEXT and ElevenLabs speaks it (far more natural Hebrew).
+  private engine: "gemini" | "eleven";
+  private elevenVoiceId: string;
+  private ttsQueue: string[] = [];
+  private ttsDraining = false;
+  private ttsSources = new Set<AudioBufferSourceNode>();
+  private ttsTextBuf = "";
+  private hangupAfterTts = false;
+
+  constructor(
+    cb: LiveCallbacks,
+    voice = "Callirrhoe",
+    fast = false,
+    engine: "gemini" | "eleven" = "gemini",
+    elevenVoiceId = "EXAVITQu4vr4xnSDxMaL",
+  ) {
     this.cb = cb;
     this.voice = voice;
     this.fast = fast;
+    this.engine = engine;
+    this.elevenVoiceId = elevenVoiceId;
   }
 
   private set(s: LiveState) {
@@ -87,16 +105,28 @@ export class DalitLiveSession {
           onclose: () => {},
         },
         config: {
-          responseModalities: [Modality.AUDIO],
+          // ElevenLabs engine → Gemini replies in TEXT (we speak it ourselves);
+          // Gemini engine → native audio out.
+          responseModalities: this.engine === "eleven" ? [Modality.TEXT] : [Modality.AUDIO],
           systemInstruction: { parts: [{ text: buildSystemInstruction() }] },
-          speechConfig: {
-            languageCode: "he-IL",
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: this.voice } },
-          },
+          // speechConfig only matters for Gemini's own voice.
+          ...(this.engine === "eleven"
+            ? {}
+            : {
+                speechConfig: {
+                  languageCode: "he-IL",
+                  voiceConfig: { prebuiltVoiceConfig: { voiceName: this.voice } },
+                },
+              }),
           tools: [{ functionDeclarations: TOOL_DECLARATIONS as any }],
-          // Transcription runs as a separate stream; "fast mode" drops it to test
-          // whether it affects perceived response latency.
-          ...(this.fast ? {} : { inputAudioTranscription: {}, outputAudioTranscription: {} }),
+          // Transcription runs as a separate stream; "fast mode" drops it. In
+          // ElevenLabs mode we read Dalit's words from the text turn directly, so
+          // only the caller's side needs transcribing.
+          ...(this.fast
+            ? {}
+            : this.engine === "eleven"
+              ? { inputAudioTranscription: {} }
+              : { inputAudioTranscription: {}, outputAudioTranscription: {} }),
           // Turn-taking: wait for a real pause before Dalit responds, so she doesn't
           // cut the caller off during natural mid-sentence pauses.
           realtimeInputConfig: {
@@ -169,8 +199,11 @@ export class DalitLiveSession {
 
   private onMessage(m: any) {
     const sc = m.serverContent;
-    // Barge-in: the model detected the caller talking over it → drop queued audio.
-    if (sc?.interrupted) this.stopPlayback();
+    // Barge-in: the caller talks over Dalit → drop whatever's queued/playing.
+    if (sc?.interrupted) {
+      this.stopPlayback();
+      if (this.engine === "eleven") this.stopTts();
+    }
 
     const inT = sc?.inputTranscription?.text;
     if (inT) {
@@ -178,21 +211,49 @@ export class DalitLiveSession {
       this.clearSilence(); // the caller is talking — reset the check-in timer
       this.silenceCount = 0;
       this.endingCall = false; // they're back — don't hang up
+      // ElevenLabs barge-in: cut Dalit's speech the moment the caller starts.
+      if (this.engine === "eleven") {
+        this.stopTts();
+        this.hangupAfterTts = false;
+      }
     }
     const outT = sc?.outputTranscription?.text;
     if (outT) this.cb.onTranscript?.("dalit", outT);
 
     const parts = sc?.modelTurn?.parts ?? [];
     for (const p of parts) {
-      const data = p.inlineData?.data;
-      if (data) {
-        this.set("speaking");
-        this.clearSilence();
-        this.playChunk(data);
+      if (this.engine === "eleven") {
+        const txt = p.text;
+        if (txt) {
+          this.cb.onTranscript?.("dalit", txt);
+          this.ttsTextBuf += txt;
+          this.flushSentences(false);
+        }
+      } else {
+        const data = p.inlineData?.data;
+        if (data) {
+          this.set("speaking");
+          this.clearSilence();
+          this.playChunk(data);
+        }
       }
     }
+
     if (sc?.turnComplete) {
-      if (this.endingCall) {
+      if (this.engine === "eleven") {
+        this.flushSentences(true); // speak the tail of the turn
+        if (this.endingCall) this.hangupAfterTts = true;
+        // Nothing to speak this turn (e.g. only a tool call) → transition now.
+        if (!this.ttsDraining && this.ttsQueue.length === 0) {
+          if (this.hangupAfterTts) {
+            this.cb.onTranscript?.("dalit", "— השיחה הסתיימה —");
+            this.stop();
+            return;
+          }
+          this.set("listening");
+          this.armSilence();
+        }
+      } else if (this.endingCall) {
         // That turn was her goodbye — let the audio finish, then hang up.
         const remainingMs = this.outputCtx
           ? Math.max(0, this.nextPlayTime - this.outputCtx.currentTime) * 1000
@@ -204,13 +265,110 @@ export class DalitLiveSession {
           }
         }, remainingMs + 1200);
         return;
+      } else {
+        this.set("listening");
+        this.armSilence(); // she's done — wait for the caller, or check back in
       }
-      this.set("listening");
-      this.armSilence(); // she's done — wait for the caller, or check back in
     }
 
     const calls = m.toolCall?.functionCalls;
     if (calls?.length) this.handleTools(calls);
+  }
+
+  // ── ElevenLabs TTS pipeline ──────────────────────────────────────────────────
+  /** Pull complete sentences off the text buffer and queue them for speech. */
+  private flushSentences(final: boolean) {
+    const re = /[^.!?…\n]*[.!?…\n]+/g;
+    let match: RegExpExecArray | null;
+    let lastIndex = 0;
+    const buf = this.ttsTextBuf;
+    const sentences: string[] = [];
+    while ((match = re.exec(buf)) !== null) {
+      sentences.push(match[0]);
+      lastIndex = re.lastIndex;
+    }
+    if (sentences.length) {
+      this.ttsTextBuf = buf.slice(lastIndex);
+      for (const s of sentences) this.enqueueTts(s);
+    }
+    if (final && this.ttsTextBuf.trim()) {
+      this.enqueueTts(this.ttsTextBuf);
+      this.ttsTextBuf = "";
+    }
+  }
+
+  private enqueueTts(sentence: string) {
+    const s = sentence.trim();
+    if (!s) return;
+    this.ttsQueue.push(s);
+    this.set("speaking");
+    this.clearSilence();
+    if (!this.ttsDraining) void this.drainTts();
+  }
+
+  private async drainTts() {
+    this.ttsDraining = true;
+    while (this.active && this.ttsQueue.length) {
+      const sentence = this.ttsQueue.shift() as string;
+      try {
+        const audio = await this.fetchTts(sentence);
+        if (!this.active) break;
+        if (audio) await this.playBuffer(audio);
+      } catch {
+        /* skip a failed sentence rather than stall the call */
+      }
+    }
+    this.ttsDraining = false;
+    if (!this.active) return;
+    if (this.ttsQueue.length === 0) {
+      if (this.hangupAfterTts) {
+        this.cb.onTranscript?.("dalit", "— השיחה הסתיימה —");
+        this.stop();
+        return;
+      }
+      this.set("listening");
+      this.armSilence();
+    }
+  }
+
+  private async fetchTts(text: string): Promise<AudioBuffer | null> {
+    if (!this.outputCtx) return null;
+    const r = await fetch("/api/tts/elevenlabs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, voiceId: this.elevenVoiceId }),
+    });
+    if (!r.ok) return null;
+    const arr = await r.arrayBuffer();
+    return await this.outputCtx.decodeAudioData(arr);
+  }
+
+  private playBuffer(buffer: AudioBuffer): Promise<void> {
+    return new Promise((resolve) => {
+      if (!this.outputCtx) return resolve();
+      const node = this.outputCtx.createBufferSource();
+      node.buffer = buffer;
+      node.connect(this.outputCtx.destination);
+      node.onended = () => {
+        this.ttsSources.delete(node);
+        resolve();
+      };
+      this.ttsSources.add(node);
+      node.start();
+    });
+  }
+
+  private stopTts() {
+    this.ttsQueue = [];
+    this.ttsTextBuf = "";
+    for (const s of this.ttsSources) {
+      try {
+        s.stop();
+      } catch {
+        /* ignore */
+      }
+    }
+    this.ttsSources.clear();
   }
 
   private clearSilence() {
@@ -302,6 +460,8 @@ export class DalitLiveSession {
     this.active = false;
     this.clearSilence();
     this.stopPlayback();
+    this.stopTts();
+    this.hangupAfterTts = false;
     try {
       this.processor?.disconnect();
     } catch {}

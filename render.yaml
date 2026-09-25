@@ -19,6 +19,8 @@ services:
         value: gemini-3.8-live
       - key: GRAPH_SENDER
         value: Insurance@ophirins.co.il
+      - key: ELEVEN_MODEL
+        value: eleven_v3
       # Secrets — paste these in the Render dashboard when prompted.
       - key: CRM_BASE_URL
         sync: false
@@ -35,4 +37,6 @@ services:
       - key: AZURE_CLIENT_ID
         sync: false
       - key: AZURE_CLIENT_SECRET
+        sync: false
+      - key: ELEVENLABS_API_KEY
         sync: false
