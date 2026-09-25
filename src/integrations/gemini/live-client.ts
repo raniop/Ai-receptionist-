@@ -157,7 +157,7 @@ export class DalitLiveSession {
               startOfSpeechSensitivity: "START_SENSITIVITY_LOW" as any,
               endOfSpeechSensitivity: "END_SENSITIVITY_HIGH" as any,
               prefixPaddingMs: 300,
-              silenceDurationMs: 700,
+              silenceDurationMs: 550,
             },
           },
         },
@@ -309,17 +309,30 @@ export class DalitLiveSession {
   }
 
   // ── external TTS pipeline (ElevenLabs / Azure) ───────────────────────────────
-  /** Pull complete sentences off the buffer and queue them so speech starts early. */
+  /** Emit speech at the earliest natural pause — sentence end, or a comma once the
+   *  clause is long enough — so she starts talking sooner on long first sentences. */
   private flushSentences(final: boolean) {
-    const re = /[^.!?…\n]*[.!?…\n]+/g;
-    let match: RegExpExecArray | null;
-    let lastIndex = 0;
-    const buf = this.ttsTextBuf;
-    while ((match = re.exec(buf)) !== null) {
-      this.enqueueTts(match[0]);
-      lastIndex = re.lastIndex;
+    const MIN = 16; // don't speak a fragment shorter than this
+    for (;;) {
+      const buf = this.ttsTextBuf;
+      const strong = buf.search(/[.!?…\n]/);
+      let comma = -1;
+      const cm = /[,;:]/g;
+      let m: RegExpExecArray | null;
+      while ((m = cm.exec(buf)) !== null) {
+        if (m.index >= MIN) {
+          comma = m.index;
+          break;
+        }
+      }
+      let idx = -1;
+      if (strong >= 0 && comma >= 0) idx = Math.min(strong, comma);
+      else idx = Math.max(strong, comma);
+      if (idx < 0) break;
+      const piece = buf.slice(0, idx + 1).trim();
+      this.ttsTextBuf = buf.slice(idx + 1);
+      if (piece) this.enqueueTts(piece);
     }
-    if (lastIndex) this.ttsTextBuf = buf.slice(lastIndex);
     if (final && this.ttsTextBuf.trim()) {
       this.enqueueTts(this.ttsTextBuf);
       this.ttsTextBuf = "";
