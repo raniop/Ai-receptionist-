@@ -35,6 +35,7 @@ export function LiveDemo() {
   const [lines, setLines] = useState<Line[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [voice, setVoice] = useState("Callirrhoe");
+  const [fast, setFast] = useState(false);
   const sessionRef = useRef<DalitLiveSession | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
@@ -64,6 +65,7 @@ export function LiveDemo() {
         onError: (m) => setError(m),
       },
       voice,
+      fast,
     );
     sessionRef.current = s;
     void s.start();
@@ -161,6 +163,20 @@ export function LiveDemo() {
               (הקול מתעדכן בשיחה הבאה)
             </p>
           ) : null}
+
+          <label
+            className="mt-3 inline-flex items-center justify-center gap-2 text-[11px] font-medium"
+            style={{ color: "#0b5e52", opacity: active ? 0.5 : 1 }}
+          >
+            <input
+              type="checkbox"
+              checked={fast}
+              onChange={(e) => setFast(e.target.checked)}
+              disabled={active}
+              style={{ accentColor: "#0f766e" }}
+            />
+            מצב מהיר — בלי תמלול (לבדיקת מהירות תגובה)
+          </label>
         </div>
       </div>
 
@@ -182,7 +198,9 @@ export function LiveDemo() {
         <div className="thread-scroll flex-1 space-y-3 overflow-y-auto px-5 py-4">
           {lines.length === 0 ? (
             <p className="text-sm" style={{ color: "#64748b" }}>
-              לחצו "התחל שיחה", אשרו מיקרופון, ואמרו שלום. דלית תענה בקול, בזמן אמת.
+              {fast
+                ? 'מצב מהיר פעיל — התמלול כבוי לצורך הבדיקה. דלית תדבר כרגיל, פשוט בלי טקסט.'
+                : 'לחצו "התחל שיחה", אשרו מיקרופון, ואמרו שלום. דלית תענה בקול, בזמן אמת.'}
             </p>
           ) : (
             lines.map((l) => (

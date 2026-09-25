@@ -50,13 +50,15 @@ export class DalitLiveSession {
   private sources = new Set<AudioBufferSourceNode>();
   private active = false;
   private voice: string;
+  private fast: boolean; // "fast mode" — skip transcription to test response latency
   private silenceTimer: ReturnType<typeof setTimeout> | null = null;
   private silenceCount = 0;
   private endingCall = false; // true once the goodbye is sent → hang up after it plays
 
-  constructor(cb: LiveCallbacks, voice = "Callirrhoe") {
+  constructor(cb: LiveCallbacks, voice = "Callirrhoe", fast = false) {
     this.cb = cb;
     this.voice = voice;
+    this.fast = fast;
   }
 
   private set(s: LiveState) {
@@ -92,8 +94,9 @@ export class DalitLiveSession {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: this.voice } },
           },
           tools: [{ functionDeclarations: TOOL_DECLARATIONS as any }],
-          inputAudioTranscription: {},
-          outputAudioTranscription: {},
+          // Transcription runs as a separate stream; "fast mode" drops it to test
+          // whether it affects perceived response latency.
+          ...(this.fast ? {} : { inputAudioTranscription: {}, outputAudioTranscription: {} }),
           // Turn-taking: wait for a real pause before Dalit responds, so she doesn't
           // cut the caller off during natural mid-sentence pauses.
           realtimeInputConfig: {
@@ -141,7 +144,9 @@ export class DalitLiveSession {
     });
     this.inputCtx = new AudioContext({ sampleRate: INPUT_RATE });
     const src = this.inputCtx.createMediaStreamSource(this.stream);
-    this.processor = this.inputCtx.createScriptProcessor(4096, 1, 1);
+    // 2048 samples ≈ 128ms per chunk (vs 256ms at 4096) → mic audio reaches the
+    // model sooner, shaving a little off the response latency.
+    this.processor = this.inputCtx.createScriptProcessor(2048, 1, 1);
     this.processor.onaudioprocess = (ev) => {
       if (!this.active || !this.session) return;
       const input = ev.inputBuffer.getChannelData(0);
