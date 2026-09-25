@@ -97,13 +97,14 @@ export class DalitLiveSession {
           // cut the caller off during natural mid-sentence pauses.
           realtimeInputConfig: {
             automaticActivityDetection: {
+              // Snappier turn-taking: HIGH end-sensitivity + a 700ms pause means
+              // Dalit starts replying soon after the caller stops, instead of the
+              // long lag END_SENSITIVITY_LOW + 1.5s produced. 700ms is still longer
+              // than a normal mid-sentence breath, so she won't cut in early.
               startOfSpeechSensitivity: "START_SENSITIVITY_LOW" as any,
-              endOfSpeechSensitivity: "END_SENSITIVITY_LOW" as any,
+              endOfSpeechSensitivity: "END_SENSITIVITY_HIGH" as any,
               prefixPaddingMs: 300,
-              // How long a pause counts as "you're done": 1s responds noticeably
-              // faster than 1.5s, while END_SENSITIVITY_LOW still guards against
-              // cutting the caller off during natural mid-sentence pauses.
-              silenceDurationMs: 1000,
+              silenceDurationMs: 700,
             },
           },
         },
