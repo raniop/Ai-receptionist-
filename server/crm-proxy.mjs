@@ -300,20 +300,26 @@ function agentEmailHtml({ agentName, callerName, callerPhone, reason }) {
 }
 
 // Team email directory (server-side allowlist, so the browser can't email arbitrary
-// addresses). Names match src/content/site.ts.
-const STAFF_EMAILS = {
-  "אלי אופיר": "eli@ophirins.co.il",
-  "הדר גלעד": "hadar@ophirins.co.il",
-  "רני אופיר": "rani@ophirins.co.il",
-  "גלעד כרמונה": "gilad@ophirins.co.il",
-  שיראל: "ophir@ophirins.co.il",
-};
+// addresses). Names match src/content/site.ts. The voice agent may pass Hebrew or
+// the English labels of its transfer destinations ("Rani Ophir - operations").
+const STAFF = [
+  { email: "eli@ophirins.co.il", aliases: ["אלי", "eli"] },
+  { email: "hadar@ophirins.co.il", aliases: ["הדר", "hadar"] },
+  { email: "rani@ophirins.co.il", aliases: ["רני", "rani"] },
+  { email: "gilad@ophirins.co.il", aliases: ["גלעד", "כרמונה", "gilad", "carmona"] },
+  { email: "ophir@ophirins.co.il", aliases: ["שיראל", "shirel", "secretary", "מזכיר"] },
+];
 function agentEmail(name) {
-  const q = String(name || "").trim();
+  const q = String(name || "").trim().toLowerCase();
   if (!q) return null;
-  const keys = Object.keys(STAFF_EMAILS);
-  const hit = keys.find((k) => k.includes(q)) ?? keys.find((k) => q.includes(k.split(" ")[0]));
-  return hit ? STAFF_EMAILS[hit] : null;
+  // The alias that appears EARLIEST wins: "הדר גלעד" is Hadar, not Gilad Carmona.
+  let best = null;
+  for (const s of STAFF)
+    for (const a of s.aliases) {
+      const i = q.indexOf(a);
+      if (i >= 0 && (!best || i < best.i)) best = { i, email: s.email };
+    }
+  return best?.email ?? null;
 }
 
 // Everything sensitive (the CRM host, the service account) lives in .env, which is
@@ -696,12 +702,19 @@ async function runMcpTool(name, a = {}) {
     }
     case "contact_agent": {
       const r = await mcpInternal("/api/notify/agent", { method: "POST", body: { agent_name: a.agent_name, caller_name: a.caller_name, caller_phone: a.caller_phone, reason: a.reason } });
-      return { ok: true, emailed: Boolean(r.emailed) };
+      if (r.emailed) return { ok: true, emailed: true };
+      // Unknown name or a mail failure — never lose the message: send it to the office.
+      const l = await mcpInternal("/api/notify/lead", { method: "POST", body: { full_name: a.caller_name, phone: a.caller_phone, topic: `הודעה עבור ${a.agent_name}: ${a.reason || "בקשת חזרה"}` } });
+      return l.emailed
+        ? { ok: true, emailed: true, delivered_to: "office" }
+        : { ok: false, emailed: false, error: "ההודעה לא נשלחה. אל תגידי שהיא הועברה — התנצלי והציעי להתקשר למשרד בשעות הפעילות, 073-2721111." };
     }
     case "leave_message_for_office":
     case "save_lead": {
       const r = await mcpInternal("/api/notify/lead", { method: "POST", body: { full_name: a.full_name, phone: a.phone, topic: a.topic } });
-      return { ok: true, emailed: Boolean(r.emailed) };
+      return r.emailed
+        ? { ok: true, emailed: true }
+        : { ok: false, emailed: false, error: "הפנייה לא נשלחה. אל תגידי שהיא נרשמה — התנצלי והציעי להתקשר למשרד בשעות הפעילות, 073-2721111." };
     }
     default:
       return { ok: false, error: `unknown tool: ${name}` };
