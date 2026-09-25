@@ -8,7 +8,9 @@ services:
     runtime: node
     plan: free
     region: frankfurt
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build:prod
+    # Render's Node image already ships pnpm; `corepack enable` fails on its
+    # read-only FS, so invoke pnpm directly.
+    buildCommand: pnpm install --frozen-lockfile && pnpm build:prod
     startCommand: node server/crm-proxy.mjs
     healthCheckPath: /api/crm/health
     envVars:
