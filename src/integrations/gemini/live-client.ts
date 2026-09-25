@@ -87,6 +87,24 @@ export class DalitLiveSession {
     if (this.active) return;
     this.active = true;
     this.set("connecting");
+
+    // iOS Safari only unlocks an AudioContext if it's created AND kicked inside the
+    // user-gesture that started the call — before any await. So set up output audio
+    // and play a 1-sample silent buffer here, synchronously, then connect below.
+    try {
+      this.outputCtx =
+        this.engine === "gemini" ? new AudioContext({ sampleRate: OUTPUT_RATE }) : new AudioContext();
+      this.nextPlayTime = 0;
+      void this.outputCtx.resume();
+      const silent = this.outputCtx.createBuffer(1, 1, this.outputCtx.sampleRate);
+      const s = this.outputCtx.createBufferSource();
+      s.buffer = silent;
+      s.connect(this.outputCtx.destination);
+      s.start();
+    } catch {
+      /* fall back to lazy creation below */
+    }
+
     try {
       // 1) ephemeral token from our server
       const r = await fetch("/api/gemini/token", { method: "POST" });
@@ -144,13 +162,15 @@ export class DalitLiveSession {
         },
       });
 
-      // 3) audio out context. Gemini streams raw 24kHz PCM (needs a matching rate);
-      // for ElevenLabs/Azure we decode MP3, so use the device's native rate.
-      // resume() is required on iOS Safari, where a new context starts suspended.
-      this.outputCtx =
-        this.engine === "gemini" ? new AudioContext({ sampleRate: OUTPUT_RATE }) : new AudioContext();
+      // 3) audio out context — normally already created in the gesture above;
+      // create here only if that failed. Gemini needs a 24kHz context for its raw
+      // PCM; ElevenLabs/Azure decode MP3 so the device's native rate is fine.
+      if (!this.outputCtx) {
+        this.outputCtx =
+          this.engine === "gemini" ? new AudioContext({ sampleRate: OUTPUT_RATE }) : new AudioContext();
+        this.nextPlayTime = 0;
+      }
       await this.outputCtx.resume().catch(() => {});
-      this.nextPlayTime = 0;
 
       // 4) mic capture → 16 kHz PCM → stream up
       await this.startMic();
