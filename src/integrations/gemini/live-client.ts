@@ -9,7 +9,8 @@ import { runTool } from "./tools";
 const INPUT_RATE = 16000;
 const OUTPUT_RATE = 24000;
 // After Dalit finishes and the caller stays silent this long, she checks back in.
-const SILENCE_PROMPT_MS = 8000;
+// Kept long so it never fires while the caller is just thinking or mid-sentence.
+const SILENCE_PROMPT_MS = 15000;
 
 export type LiveState = "idle" | "connecting" | "listening" | "speaking" | "thinking" | "error";
 export type TranscriptRole = "caller" | "dalit";
@@ -99,7 +100,10 @@ export class DalitLiveSession {
               startOfSpeechSensitivity: "START_SENSITIVITY_LOW" as any,
               endOfSpeechSensitivity: "END_SENSITIVITY_LOW" as any,
               prefixPaddingMs: 300,
-              silenceDurationMs: 1500,
+              // How long a pause counts as "you're done": 1s responds noticeably
+              // faster than 1.5s, while END_SENSITIVITY_LOW still guards against
+              // cutting the caller off during natural mid-sentence pauses.
+              silenceDurationMs: 1000,
             },
           },
         },
@@ -207,7 +211,7 @@ export class DalitLiveSession {
     this.silenceCount += 1;
     const nudge =
       this.silenceCount === 1
-        ? "(המתקשר שותק כבר כמה שניות. שאלי בעדינות אם יש עוד משהו שאפשר לעזור בו.)"
+        ? "(המתקשר שקט זמן מה. בדקי בעדינות אם הוא עדיין על הקו ואם תוכלי לעזור בעוד משהו — בלי להניח שסיים או שאין לו שאלות.)"
         : "(המתקשר עדיין שותק. הודי לו על הפנייה, אמרי שאנחנו כאן בכל עת, ואחלי יום טוב.)";
     try {
       this.session.sendClientContent({
