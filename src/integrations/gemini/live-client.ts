@@ -64,6 +64,7 @@ export class DalitLiveSession {
   private ttsSources = new Set<AudioBufferSourceNode>();
   private ttsTextBuf = "";
   private hangupAfterTts = false;
+  private turnDone = false; // this Dalit turn's text is complete (external engines)
 
   constructor(
     cb: LiveCallbacks,
@@ -241,13 +242,17 @@ export class DalitLiveSession {
         this.hangupAfterTts = false;
       }
     }
-    // Dalit's words. For external engines this transcription IS what we speak.
-    // Accumulate the whole turn and speak it in ONE request (smooth prosody, no
-    // gaps between sentences); it's flushed at turnComplete below.
+    // Dalit's words. For external engines this transcription IS what we speak —
+    // stream it sentence-by-sentence so she starts talking almost immediately
+    // instead of waiting for the whole (slow) Gemini turn to finish.
     const outT = sc?.outputTranscription?.text;
     if (outT) {
       this.cb.onTranscript?.("dalit", outT);
-      if (this.engine !== "gemini") this.ttsTextBuf += outT;
+      if (this.engine !== "gemini") {
+        this.turnDone = false; // new words arriving → turn is in progress
+        this.ttsTextBuf += outT;
+        this.flushSentences(false);
+      }
     }
 
     const parts = sc?.modelTurn?.parts ?? [];
@@ -266,7 +271,8 @@ export class DalitLiveSession {
 
     if (sc?.turnComplete) {
       if (this.engine !== "gemini") {
-        // Speak the whole turn in one TTS request (smooth, no inter-sentence gaps).
+        this.turnDone = true;
+        // Speak the tail (any words after the last sentence break).
         if (this.ttsTextBuf.trim()) this.enqueueTts(this.ttsTextBuf);
         this.ttsTextBuf = "";
         if (this.endingCall) this.hangupAfterTts = true;
@@ -303,6 +309,23 @@ export class DalitLiveSession {
   }
 
   // ── external TTS pipeline (ElevenLabs / Azure) ───────────────────────────────
+  /** Pull complete sentences off the buffer and queue them so speech starts early. */
+  private flushSentences(final: boolean) {
+    const re = /[^.!?…\n]*[.!?…\n]+/g;
+    let match: RegExpExecArray | null;
+    let lastIndex = 0;
+    const buf = this.ttsTextBuf;
+    while ((match = re.exec(buf)) !== null) {
+      this.enqueueTts(match[0]);
+      lastIndex = re.lastIndex;
+    }
+    if (lastIndex) this.ttsTextBuf = buf.slice(lastIndex);
+    if (final && this.ttsTextBuf.trim()) {
+      this.enqueueTts(this.ttsTextBuf);
+      this.ttsTextBuf = "";
+    }
+  }
+
   private enqueueTts(sentence: string) {
     const s = sentence.trim();
     if (!s) return;
@@ -314,27 +337,32 @@ export class DalitLiveSession {
 
   private async drainTts() {
     this.ttsDraining = true;
-    while (this.active && this.ttsQueue.length) {
-      const sentence = this.ttsQueue.shift() as string;
+    // Prefetch the next sentence's audio while the current one plays → no gaps.
+    let next = this.ttsQueue.length ? this.fetchTts(this.ttsQueue.shift() as string) : null;
+    while (next) {
+      let audio: AudioBuffer | null = null;
       try {
-        const audio = await this.fetchTts(sentence);
-        if (!this.active) break;
-        if (audio) await this.playBuffer(audio);
+        audio = await next;
       } catch {
-        /* skip a failed sentence rather than stall the call */
+        audio = null;
       }
+      next = this.ttsQueue.length ? this.fetchTts(this.ttsQueue.shift() as string) : null;
+      if (!this.active) return;
+      if (audio) await this.playBuffer(audio);
+      if (!this.active) return;
     }
     this.ttsDraining = false;
-    if (!this.active) return;
-    if (this.ttsQueue.length === 0) {
-      if (this.hangupAfterTts) {
-        this.cb.onTranscript?.("dalit", "— השיחה הסתיימה —");
-        this.stop();
-        return;
-      }
-      this.set("listening");
-      this.armSilence();
+    // More may have been queued between the last shift and now.
+    if (this.ttsQueue.length) return void this.drainTts();
+    // Only wrap up once the turn's text is actually complete.
+    if (!this.turnDone) return;
+    if (this.hangupAfterTts) {
+      this.cb.onTranscript?.("dalit", "— השיחה הסתיימה —");
+      this.stop();
+      return;
     }
+    this.set("listening");
+    this.armSilence();
   }
 
   private async fetchTts(text: string): Promise<AudioBuffer | null> {
@@ -372,6 +400,7 @@ export class DalitLiveSession {
   private stopTts() {
     this.ttsQueue = [];
     this.ttsTextBuf = "";
+    this.turnDone = false;
     for (const s of this.ttsSources) {
       try {
         s.stop();
