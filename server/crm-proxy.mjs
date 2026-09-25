@@ -560,7 +560,9 @@ async function mcpInternal(pathname, { method = "GET", body, session } = {}) {
 // description leads with English keywords, or the search misses (it returned
 // verify but not send, costing a second search round-trip).
 const MCP_TOOLS = [
-  { name: "send_policy_otp", description: "STEP 1 of policy check / policy lookup: send SMS OTP verification code to the customer, identified by Israeli ID number (teudat zehut). Ask the caller for their ID number — NOT a phone number; the code goes to the phone on file. שולח קוד אימות ב-SMS לפי תעודת זהות.",
+  // Renamed from send_policy_otp / save_lead: under those names xAI's tool search
+  // never returned them (every other tool was found). Old names still work below.
+  { name: "start_policy_check", description: "STEP 1 of policy check / policy lookup: send SMS OTP verification code to the customer, identified by Israeli ID number (teudat zehut). Ask the caller for their ID number — NOT a phone number; the code goes to the phone on file. שולח קוד אימות ב-SMS לפי תעודת זהות.",
     inputSchema: { type: "object", properties: { person_id: { type: "string", description: "Israeli ID number / מספר תעודת הזהות" } }, required: ["person_id"] } },
   { name: "verify_policy_otp", description: "STEP 2 of policy check: verify the SMS OTP code the caller reads out. On success returns EVERYTHING — customer name, policies, and for active/latest policies their coverages (riders) and insured members. No other tool needed after this. מאמת את קוד ה-SMS ומחזיר את כל פרטי הפוליסה.",
     inputSchema: { type: "object", properties: { person_id: { type: "string" }, code: { type: "string", description: "הקוד בן 4-6 ספרות" } }, required: ["person_id", "code"] } },
@@ -570,7 +572,7 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", properties: { session: { type: "string" }, policy_index: { type: "string" } }, required: ["session", "policy_index"] } },
   { name: "get_policy_members", description: "Insured member names on an OLDER policy that came without details. Requires session and policy_index. שמות המבוטחים בפוליסה ישנה.",
     inputSchema: { type: "object", properties: { session: { type: "string" }, policy_index: { type: "string" } }, required: ["session", "policy_index"] } },
-  { name: "save_lead", description: "Save a lead / leave a message for the office (emails the office): price quote request, or car/home/business insurance inquiry, or any callback request outside business hours. רושם פנייה של לקוח.",
+  { name: "leave_message_for_office", description: "Save a lead / leave a message for the office (emails the office): price quote request, or car/home/business insurance inquiry, or any callback request outside business hours. רושם פנייה של לקוח.",
     inputSchema: { type: "object", properties: { full_name: { type: "string" }, phone: { type: "string" }, topic: { type: "string" } }, required: ["full_name", "phone"] } },
   { name: "check_agent_status", description: "Check if a staff member / employee is available to take a call (transfer): available / busy (on a call) / away. בודק זמינות עובד.",
     inputSchema: { type: "object", properties: { agent_name: { type: "string" } }, required: ["agent_name"] } },
@@ -655,6 +657,7 @@ async function buildBundle(me) {
 
 async function runMcpTool(name, a = {}) {
   switch (name) {
+    case "start_policy_check":
     case "send_policy_otp": {
       const r = await mcpInternal("/api/crm/otp/send", { method: "POST", body: { personId: a.person_id } });
       if (r.status === 200) prefetchBundle(a.person_id); // warm it while the caller reads the SMS
@@ -690,6 +693,7 @@ async function runMcpTool(name, a = {}) {
       const r = await mcpInternal("/api/notify/agent", { method: "POST", body: { agent_name: a.agent_name, caller_name: a.caller_name, caller_phone: a.caller_phone, reason: a.reason } });
       return { ok: true, emailed: Boolean(r.emailed) };
     }
+    case "leave_message_for_office":
     case "save_lead": {
       const r = await mcpInternal("/api/notify/lead", { method: "POST", body: { full_name: a.full_name, phone: a.phone, topic: a.topic } });
       return { ok: true, emailed: Boolean(r.emailed) };
