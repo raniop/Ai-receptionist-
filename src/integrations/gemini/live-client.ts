@@ -242,13 +242,12 @@ export class DalitLiveSession {
       }
     }
     // Dalit's words. For external engines this transcription IS what we speak.
+    // Accumulate the whole turn and speak it in ONE request (smooth prosody, no
+    // gaps between sentences); it's flushed at turnComplete below.
     const outT = sc?.outputTranscription?.text;
     if (outT) {
       this.cb.onTranscript?.("dalit", outT);
-      if (this.engine !== "gemini") {
-        this.ttsTextBuf += outT;
-        this.flushSentences(false);
-      }
+      if (this.engine !== "gemini") this.ttsTextBuf += outT;
     }
 
     const parts = sc?.modelTurn?.parts ?? [];
@@ -267,7 +266,9 @@ export class DalitLiveSession {
 
     if (sc?.turnComplete) {
       if (this.engine !== "gemini") {
-        this.flushSentences(true); // speak the tail of the turn
+        // Speak the whole turn in one TTS request (smooth, no inter-sentence gaps).
+        if (this.ttsTextBuf.trim()) this.enqueueTts(this.ttsTextBuf);
+        this.ttsTextBuf = "";
         if (this.endingCall) this.hangupAfterTts = true;
         // Nothing to speak this turn (e.g. only a tool call) → transition now.
         if (!this.ttsDraining && this.ttsQueue.length === 0) {
@@ -301,28 +302,7 @@ export class DalitLiveSession {
     if (calls?.length) this.handleTools(calls);
   }
 
-  // ── ElevenLabs TTS pipeline ──────────────────────────────────────────────────
-  /** Pull complete sentences off the text buffer and queue them for speech. */
-  private flushSentences(final: boolean) {
-    const re = /[^.!?…\n]*[.!?…\n]+/g;
-    let match: RegExpExecArray | null;
-    let lastIndex = 0;
-    const buf = this.ttsTextBuf;
-    const sentences: string[] = [];
-    while ((match = re.exec(buf)) !== null) {
-      sentences.push(match[0]);
-      lastIndex = re.lastIndex;
-    }
-    if (sentences.length) {
-      this.ttsTextBuf = buf.slice(lastIndex);
-      for (const s of sentences) this.enqueueTts(s);
-    }
-    if (final && this.ttsTextBuf.trim()) {
-      this.enqueueTts(this.ttsTextBuf);
-      this.ttsTextBuf = "";
-    }
-  }
-
+  // ── external TTS pipeline (ElevenLabs / Azure) ───────────────────────────────
   private enqueueTts(sentence: string) {
     const s = sentence.trim();
     if (!s) return;
