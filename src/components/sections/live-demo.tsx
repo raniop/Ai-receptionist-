@@ -170,26 +170,35 @@ export function LiveDemo() {
         </p>
       ) : null}
 
-      <section className="flex min-h-[340px] flex-col rounded-xl border border-border bg-card">
-        <header className="border-b border-border px-5 py-3">
-          <p className="text-sm font-semibold text-foreground">תמלול חי</p>
+      <section
+        className="flex min-h-[340px] flex-col rounded-2xl"
+        style={{ background: "#ffffff", border: "1px solid #dbeee9", boxShadow: "0 8px 24px rgba(6,60,52,0.06)" }}
+      >
+        <header className="px-5 py-3" style={{ borderBottom: "1px solid #ecf3f1" }}>
+          <p className="text-sm font-semibold" style={{ color: "#0f2a26" }}>
+            תמלול חי
+          </p>
         </header>
         <div className="thread-scroll flex-1 space-y-3 overflow-y-auto px-5 py-4">
           {lines.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm" style={{ color: "#64748b" }}>
               לחצו "התחל שיחה", אשרו מיקרופון, ואמרו שלום. דלית תענה בקול, בזמן אמת.
             </p>
           ) : (
             lines.map((l) => (
-              <div key={l.id} className={l.role === "caller" ? "text-start" : "text-start"}>
+              <div key={l.id} className="text-start">
                 <div
-                  className={`inline-block max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                  className="inline-block max-w-[85%] rounded-xl px-3 py-2 text-sm"
+                  style={
                     l.role === "caller"
-                      ? "bg-secondary text-foreground"
-                      : "bg-primary/10 text-foreground"
-                  }`}
+                      ? { background: "#f1f5f9", color: "#1a2233" }
+                      : { background: "#ccfbf1", color: "#0b3c34" }
+                  }
                 >
-                  <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  <span
+                    className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide"
+                    style={{ color: l.role === "caller" ? "#64748b" : "#0f766e" }}
+                  >
                     {l.role === "caller" ? "מתקשר" : "דלית"}
                   </span>
                   {l.text}
