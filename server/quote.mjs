@@ -1,0 +1,263 @@
+// Harel "Darkon First Class" travel-insurance price calculator — 2026 tariff
+// (as published Feb 2026; source: the price list the office uploaded, from
+// shukabit.co.il/harel-first-class/prices). Dalit collects the trip details and
+// the server does the arithmetic: the voice model is not reliable with tables.
+// All amounts are USD. Update the tables here when Harel publishes a new tariff.
+
+const r2 = (n) => Math.round(n * 100) / 100;
+
+// Base policy, per day. `short` = trips up to 14 days (USA: 20); `long` = the rate
+// "from day 15" (USA: "from day 21"), applied to the days after the short period.
+// Both include search & rescue at $0.20/day, which the caller may drop.
+const BASE = {
+  other: {
+    shortDays: 14,
+    bands: [
+      { max: 50, short: 2.5, long: 2.5, maxDays: 365 },
+      { max: 60, short: 2.5, long: 2.8, maxDays: 180 },
+      { max: 65, short: 3.8, long: 4.0, maxDays: 120 },
+      { max: 70, short: 4.8, long: 5.1, maxDays: 120 },
+      { max: 75, short: 6.55, long: 6.55, maxDays: 120 },
+      { max: 80, short: 11.6, long: 11.6, maxDays: 60 },
+      { max: 85, short: 11.6, long: 11.6, maxDays: 30 },
+      { max: 95, short: 17.5, long: 17.5, maxDays: 30 },
+    ],
+  },
+  usa: {
+    shortDays: 20,
+    bands: [
+      { max: 40, short: 3.5, long: 3.7, maxDays: 365 },
+      { max: 50, short: 3.5, long: 3.7, maxDays: 180 },
+      { max: 60, short: 3.5, long: 3.7, maxDays: 180 },
+      { max: 65, short: 6.8, long: 6.8, maxDays: 120 },
+      { max: 70, short: 9.7, long: 9.7, maxDays: 120 },
+      { max: 75, short: 11.6, long: 11.6, maxDays: 120 },
+      { max: 80, short: 21.2, long: 21.2, maxDays: 60 },
+      { max: 85, short: 21.2, long: 21.2, maxDays: 30 },
+      { max: 95, short: 32.5, long: 32.5, maxDays: 30 },
+    ],
+  },
+};
+const SEARCH_RESCUE_PER_DAY = 0.2;
+
+const byAge = (bands, age) => bands.find((b) => age <= b.max) ?? null;
+
+const CANCELLATION = [ // per day: [cover up to $5,000, cover up to $10,000]
+  { max: 17, c5: 0.65, c10: 0.9 }, { max: 40, c5: 0.7, c10: 1.0 }, { max: 50, c5: 1.0, c10: 1.7 },
+  { max: 60, c5: 1.0, c10: 2.6 }, { max: 75, c5: 1.5, c10: 3.8 }, { max: 85, c5: 2.8, c10: 5.5 },
+  { max: 95, c5: 4.2, c10: 8.0 },
+];
+const PRE_EXISTING = [ // worsening of a pre-existing condition — subject to medical underwriting
+  { max: 17, rate: 3.35 }, { max: 60, rate: 4.05 }, { max: 65, rate: 6.25 }, { max: 70, rate: 6.5 },
+  { max: 75, rate: 9.0 }, { max: 85, rate: 15.0 }, { max: 95, rate: 22.0 },
+];
+const PERSONAL_ACCIDENT = [ // + extreme-sports add-on when extreme sports is also taken
+  { max: 17, rate: 0.25, extreme: 0.1 }, { max: 40, rate: 0.4, extreme: 0.15 }, { max: 50, rate: 0.7, extreme: 0.25 },
+  { max: 60, rate: 0.96, extreme: 0.35 }, { max: 70, rate: 1.08, extreme: 0.4 },
+];
+const BICYCLE = { 2500: 1.33, 4500: 2.46, 6000: 3.3 }; // per day by cover, up to 90 days
+
+const EXTENSION_NAMES = {
+  baggage: "כבודה",
+  cancellation_5000: "ביטול/קיצור נסיעה עד $5,000",
+  cancellation_10000: "ביטול/קיצור נסיעה עד $10,000",
+  extreme_sports: "ספורט אתגרי",
+  winter_sports: "ספורט חורף",
+  professional_sports: "ספורט מקצועי",
+  laptop: "מחשב נייד/טאבלט",
+  phone: "טלפון נייד",
+  rental_car: "רכב/קרוואן שכור (ביטול השתתפות עצמית)",
+  rental_car_6000: "רכב/קרוואן שכור עד $6,000",
+  bicycle_2500: "אופניים עד $2,500",
+  bicycle_4500: "אופניים עד $4,500",
+  bicycle_6000: "אופניים עד $6,000",
+  pregnancy: "היריון עד שבוע 32",
+  pre_existing: "החמרה של מצב רפואי קודם",
+  personal_accident: "תאונות אישיות",
+};
+
+/** Per-day price of one extension for one traveler, or { error }. */
+function extensionDaily(ext, age, dest, all) {
+  switch (ext) {
+    case "baggage": return { rate: 0.39 };
+    case "cancellation_5000": case "cancellation_10000": {
+      const b = byAge(CANCELLATION, age);
+      return b ? { rate: ext.endsWith("5000") ? b.c5 : b.c10 } : { error: "not available at this age" };
+    }
+    case "extreme_sports":
+      return age <= 75 ? { rate: 0.5 } : age <= 85 ? { rate: 2.0 } : { error: "available up to age 85" };
+    case "winter_sports":
+      return age <= 75 ? { rate: 9.5 } : age <= 80 ? { rate: 13.5 } : { error: "available up to age 80" };
+    case "professional_sports":
+      return age <= 75 ? { rate: 2.5, capTrip: 25 } : { error: "available up to age 75" };
+    case "laptop": return { rate: 2.0 };
+    case "phone": return { rate: 1.6 };
+    case "pregnancy":
+      return age <= 42 ? { rate: dest === "usa" ? 10.0 : 5.0 } : { error: "available up to age 42" };
+    case "pre_existing": {
+      const b = byAge(PRE_EXISTING, age);
+      return b ? { rate: b.rate, note: "subject to medical underwriting (health questionnaire)" } : { error: "not available at this age" };
+    }
+    case "personal_accident": {
+      const b = byAge(PERSONAL_ACCIDENT, age);
+      if (!b) return { error: "available up to age 70" };
+      return { rate: r2(b.rate + (all.includes("extreme_sports") ? b.extreme : 0)) };
+    }
+    case "bicycle_2500": case "bicycle_4500": case "bicycle_6000":
+      return { rate: BICYCLE[ext.split("_")[1]], maxDays: 90 };
+    default: return { error: "unknown extension" };
+  }
+}
+
+// ── Health declaration (Harel form, edition 12/2024, section ד) ─────────────
+// Dalit asks these for all travelers at once; the server decides the outcome.
+export const HEALTH_QUESTIONS = [
+  { id: "q1", text: "האם אחת ממטרות הנסיעה היא אחת או יותר מהבאים: קבלת ייעוץ, אבחון או טיפול רפואי?",
+    note: "לא כולל טיפולי שיניים, השתלת שיער, טיפולים קוסמטיים וכדומה, כל עוד לא מדובר בהליך עם הרדמה מלאה." },
+  { id: "q2", text: "האם בחצי השנה האחרונה לקחת תרופות באופן קבוע או עברת טיפול אחר, או שהמליצו לך לקחת תרופות או לעבור טיפול?",
+    note: "אין צורך לענות כן על: טיפול הורמונלי בגיל המעבר, ויטמינים ותוספי מזון, אלרגיה, גלולות, כולסטרול, תת פעילות בלוטת המגן, לחץ דם, סוכרת, בעיות שינה, אסתמה, ערמונית מוגדלת, מיגרנות." },
+  { id: "q2_1", if: "q2", text: "האם אתה בטיפול או שהומלץ לך על דיאליזה, עירויי דם, מרפאת כאב, או טיפול אונקולוגי (הקרנות, כימותרפיה, ביולוגי או נוגד דחייה)?" },
+  { id: "q2_2", if: "q2", text: "האם אובחנת באחד מאלה: מחלת כליות כרונית; מחלה במערכת העצבים כמו ירידה בזיכרון, אלצהיימר, דמנציה או חוסר יציבות; קרוהן עם התקפים בשנה האחרונה; מחלת כבד כרונית; מחלה ניוונית כמו ALS; סיסטיק פיברוזיס; COPD; אי ספיקת לב; אירוע מוחי בשנה האחרונה?" },
+  { id: "q3", text: "האם בחצי השנה האחרונה אושפזת (כולל אשפוז יום) או עברת ניתוח הקשור לאחד מאלה: מחלת נפש, ראש, לב (כולל צנתור), כיס המרה ודרכי העיכול, כליות ודרכי השתן, ריאות, עמוד שדרה?",
+    note: "לא כולל ניתוח קוסמטי אסתטי." },
+  { id: "q3_1", if: "q3", text: "האם הניתוח או האשפוז כבר בוצע, ועברו מאז יותר משלושה חודשים?" },
+  { id: "q4", text: "האם בחצי השנה האחרונה הופנית לבדיקות שטרם בוצעו, או שתוצאותיהן היו לא תקינות: MRI או CT של ראש או עמוד שדרה, אקו לב, דופלר עורקי צוואר, בדיקת מאמץ או הולטר לב?" },
+  { id: "q5", text: "האם בשנתיים האחרונות אובחנת או עברת: אירוע מוחי מכל סוג, מחלת לב (למשל התקף לב, צנתור, ניתוח מעקפים, הפרעות קצב), או היצרות בעורקי הצוואר?" },
+  { id: "q5_1", if: "q5", text: "האם האירוע או הניתוח האחרון היה במהלך 12 החודשים האחרונים?" },
+  { id: "pregnant", forWomen: "18-42", text: "האם את בהיריון? אם כן, באיזה שבוע, והאם זה היריון בסיכון או מרובה עוברים, או שהרופא המליץ לא לטוס?" },
+];
+
+/**
+ * Outcome of the health declaration for one traveler.
+ * @returns {{ status: "ok"|"extension_required"|"doctor_letter"|"not_insurable", add?: string[], reasons: string[] }}
+ */
+export function assessHealth(h = {}, { dest, days, age } = {}) {
+  const yes = (k) => h[k] === true || h[k] === "yes" || h[k] === "כן";
+  const reasons = [];
+  const add = new Set();
+  let letter = false;
+  if (yes("q1")) return { status: "not_insurable", reasons: ["the trip is for medical consultation or treatment (question 1)"] };
+  if (yes("q2")) {
+    if (yes("q2_1") || yes("q2_2")) { letter = true; reasons.push("question 2.1/2.2 — a current letter from the treating doctor is required"); }
+    else { add.add("pre_existing"); reasons.push("regular medication or treatment (question 2) — the pre-existing condition extension is required"); }
+  }
+  if (yes("q3")) {
+    if (yes("q3_1")) { add.add("pre_existing"); reasons.push("hospitalization/surgery more than 3 months ago (question 3.1) — the pre-existing condition extension is required"); }
+    else { letter = true; reasons.push("recent or planned hospitalization/surgery (question 3) — a current doctor's letter is required"); }
+  }
+  if (yes("q4")) { letter = true; reasons.push("pending or abnormal tests (question 4) — a current doctor's letter is required"); }
+  if (yes("q5")) {
+    if (dest === "usa" || yes("q5_1")) { letter = true; reasons.push("heart/stroke/carotid in the last two years (question 5) — a current doctor's letter is required"); }
+    else { add.add("pre_existing"); reasons.push("heart/stroke/carotid more than 12 months ago (question 5.1) — the pre-existing condition extension is required"); }
+  }
+  if (yes("pregnant")) {
+    const week = Number(h.pregnancy_week);
+    const weekAtEnd = Number.isFinite(week) ? week + (days ?? 0) / 7 : NaN;
+    if (yes("high_risk_pregnancy")) return { status: "not_insurable", reasons: ["high-risk or multiple pregnancy, or the doctor advised not to fly (question 6.2)"] };
+    if (age > 42 || (Number.isFinite(weekAtEnd) && weekAtEnd > 32))
+      return { status: "not_insurable", reasons: ["the pregnancy extension ends at week 32 or age 42 before the trip ends, so the trip can't be insured"] };
+    add.add("pregnancy");
+    reasons.push("pregnancy — the pregnancy extension is required");
+  }
+  if (letter) return { status: "doctor_letter", add: [...add], reasons };
+  return { status: add.size ? "extension_required" : "ok", add: [...add], reasons };
+}
+
+const RENTAL = { // per policy (one car), not per traveler
+  rental_car: { rate: 6.5, minAge: 24, maxAge: 75, capTrip: 88 },
+  rental_car_6000: { rate: 26.0, minAge: 24, maxAge: 77, capTrip: 88 },
+};
+
+/**
+ * @param {{ destination: string, days?: number, start_date?: string, end_date?: string,
+ *   travelers: { age: number, extensions?: string[] }[], extensions?: string[],
+ *   remove_search_rescue?: boolean, driver_age?: number }} q
+ */
+export function calculateQuote(q) {
+  const destText = String(q.destination ?? "").toLowerCase();
+  const dest = /usa|united states|america|ארה"?ב|ארצות הברית|אמריקה|ניו יורק|new york|florida|פלורידה|לוס אנג|los angeles|las vegas|לאס וגאס/.test(destText) ? "usa" : "other";
+  let days = Number(q.days);
+  if (!days && q.start_date && q.end_date) {
+    // Both the departure and the return day are insured days.
+    days = Math.round((Date.parse(q.end_date) - Date.parse(q.start_date)) / 864e5) + 1;
+  }
+  if (!Number.isFinite(days) || days < 1) return { ok: false, error: "need the trip length: days, or start_date and end_date" };
+  const travelers = Array.isArray(q.travelers) ? q.travelers : [];
+  if (!travelers.length) return { ok: false, error: "need at least one traveler with an age" };
+
+  const tariff = BASE[dest];
+  const tripExt = (q.extensions ?? []).filter((e) => !RENTAL[e]);
+  const warnings = [];
+  const people = travelers.map((t, i) => {
+    const age = Number(t.age);
+    const label = `traveler ${i + 1} (age ${age})`;
+    const band = Number.isFinite(age) ? byAge(tariff.bands, age) : null;
+    if (!band) { warnings.push(`${label}: not insurable online (age up to 95); the office will handle it`); return { age, error: "age not covered" }; }
+    const overMax = days > band.maxDays;
+    if (overMax) warnings.push(`${label}: the maximum trip length at this age is ${band.maxDays} days — the office must handle it`);
+    const shortDays = Math.min(days, tariff.shortDays);
+    const longDays = days - shortDays;
+    let base = shortDays * band.short + longDays * band.long;
+    if (q.remove_search_rescue) base -= days * SEARCH_RESCUE_PER_DAY;
+    const health = assessHealth(t.health, { dest, days, age });
+    if (health.status === "not_insurable") {
+      warnings.push(`${label}: cannot be insured — ${health.reasons.join("; ")}`);
+      return { age, health: health.status, reasons: health.reasons };
+    }
+    if (health.status === "doctor_letter")
+      warnings.push(`${label}: needs medical underwriting — ${health.reasons.join("; ")}. The price below is not final; the office must handle it.`);
+    let exts = [...new Set([...tripExt, ...(t.extensions ?? []).filter((e) => !RENTAL[e]), ...(health.add ?? [])])];
+    // The form: sports cover can't be bought together with the pregnancy extension.
+    if (exts.includes("pregnancy")) {
+      const blocked = exts.filter((e) => /sports/.test(e));
+      if (blocked.length) warnings.push(`${label}: sports extensions can't be combined with the pregnancy extension — left out`);
+      exts = exts.filter((e) => !/sports/.test(e));
+    }
+    const lines = [];
+    for (const ext of exts) {
+      const d = extensionDaily(ext, age, dest, exts);
+      if (d.error) { warnings.push(`${label}: ${EXTENSION_NAMES[ext] ?? ext} — ${d.error}`); continue; }
+      const extDays = d.maxDays ? Math.min(days, d.maxDays) : days;
+      let cost = d.rate * extDays;
+      if (d.capTrip) cost = Math.min(cost, d.capTrip);
+      if (d.note) warnings.push(`${label}: ${EXTENSION_NAMES[ext]} — ${d.note}`);
+      lines.push({ extension: EXTENSION_NAMES[ext] ?? ext, per_day: d.rate, total: r2(cost) });
+    }
+    const total = base + lines.reduce((s, l) => s + l.total, 0);
+    return {
+      age,
+      health: health.status,
+      ...(health.reasons.length ? { health_reasons: health.reasons } : {}),
+      ...(overMax ? { over_max_days: band.maxDays } : {}),
+      base_per_day: longDays ? { first_days: band.short, after: band.long } : band.short,
+      base: r2(base),
+      extensions: lines,
+      total: r2(total),
+    };
+  });
+
+  const policyLines = [];
+  for (const ext of q.extensions ?? []) {
+    const rc = RENTAL[ext];
+    if (!rc) continue;
+    const driver = Number(q.driver_age ?? travelers[0]?.age);
+    if (!(driver >= rc.minAge && driver <= rc.maxAge)) { warnings.push(`${EXTENSION_NAMES[ext]}: the driver must be ${rc.minAge}–${rc.maxAge}`); continue; }
+    policyLines.push({ extension: EXTENSION_NAMES[ext], per_day: rc.rate, total: r2(Math.min(rc.rate * days, rc.capTrip)) });
+  }
+
+  const total = r2(people.reduce((s, p) => s + (p.total ?? 0), 0) + policyLines.reduce((s, l) => s + l.total, 0));
+  const needsOffice = people.some((p) => p.health === "doctor_letter" || p.health === "not_insurable" || p.over_max_days);
+  return {
+    ok: true,
+    final: !needsOffice,
+    ...(needsOffice ? { next_step: "Tell the caller the office must complete this quote (medical underwriting), and leave a message for the office with the trip details." } : {}),
+    currency: "USD",
+    destination: dest === "usa" ? "USA" : "all destinations except the USA",
+    days,
+    travelers: people,
+    ...(policyLines.length ? { per_policy: policyLines } : {}),
+    total,
+    warnings,
+    disclaimer: "Estimate by the 2026 Harel tariff. Final price and terms are confirmed at purchase; pre-existing conditions are subject to the health questionnaire and medical underwriting.",
+  };
+}
