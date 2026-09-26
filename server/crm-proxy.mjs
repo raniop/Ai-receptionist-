@@ -28,7 +28,7 @@ const { WebSocketServer, WebSocket: WsClient } = require("ws");
 import { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { calculateQuote, HEALTH_QUESTIONS } from "./quote.mjs";
+import { startQuote, answerQuote } from "./quote.mjs";
 import nodemailer from "nodemailer";
 
 const {
@@ -625,23 +625,29 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", properties: { session: { type: "string" }, policy_index: { type: "string" } }, required: ["session", "policy_index"] } },
   { name: "leave_message_for_office", description: "Save a lead / leave a message for the office (emails the office): price quote request, or car/home/business insurance inquiry, or any callback request outside business hours. רושם פנייה של לקוח.",
     inputSchema: { type: "object", properties: { full_name: { type: "string" }, phone: { type: "string" }, topic: { type: "string" } }, required: ["full_name", "phone"] } },
-  { name: "travel_health_questions", description: "Price quote STEP 1: get the Harel health declaration questions (in Hebrew) to ask before calculating a travel insurance price quote. Returns the questions with their branching (follow-up questions asked only after a yes). שאלון בריאות להצעת מחיר לביטוח נסיעות.",
-    inputSchema: { type: "object", properties: {} } },
-  { name: "travel_price_quote", description: "Price quote STEP 2: calculate the exact travel insurance price (how much does it cost, premium) by the Harel 2026 tariff, from destination, trip dates or days, each traveler's age and health answers, and chosen extensions. Returns per-traveler prices, the total in USD, and whether the office must finish it. מחשב הצעת מחיר לביטוח נסיעות.",
+  { name: "travel_price_quote", description: "Price quote STEP 1: start a travel insurance price quote (how much does it cost, premium, Harel 2026 tariff). Give destination, trip dates or days, and each traveler's age (and gender if known). Returns a trip summary to confirm with the caller, a quote_id, and the FIRST Harel health question to ask. The price comes only after all health answers are sent with travel_quote_answer. מתחיל הצעת מחיר לביטוח נסיעות.",
     inputSchema: { type: "object", properties: {
       destination: { type: "string", description: "Country or region, e.g. Italy, Thailand, USA" },
       days: { type: "number", description: "Trip length in days, counting departure and return days. Or give start_date and end_date." },
-      start_date: { type: "string", description: "YYYY-MM-DD" },
+      start_date: { type: "string", description: "YYYY-MM-DD, exactly as the caller said" },
       end_date: { type: "string", description: "YYYY-MM-DD" },
       travelers: { type: "array", description: "One entry per traveler", items: { type: "object", properties: {
         age: { type: "number" },
+        gender: { type: "string", description: "male / female, if known (the pregnancy question is skipped for men)" },
         extensions: { type: "array", items: { type: "string" }, description: "Extensions only for this traveler (same names as below)" },
-        health: { type: "object", description: "This traveler's answers to the health questions, true = yes, false = no. q1, q2, q3, q4 are REQUIRED for every traveler (the quote is refused without them). Follow-ups only when relevant: q2_1, q2_2, q3_1, pregnant, pregnancy_week (number), high_risk_pregnancy." },
       }, required: ["age"] } },
       extensions: { type: "array", items: { type: "string" }, description: "Extensions for all travelers: baggage, cancellation_5000, cancellation_10000, extreme_sports, winter_sports, professional_sports, laptop, phone, rental_car, rental_car_6000, bicycle_2500, bicycle_4500, bicycle_6000, personal_accident. (pre_existing and pregnancy are added automatically from the health answers.)" },
       driver_age: { type: "number", description: "Age of the rental-car driver, if a rental car extension is chosen" },
       remove_search_rescue: { type: "boolean", description: "True only if the caller asks to drop search & rescue ($0.20/day)" },
     }, required: ["destination", "travelers"] } },
+  { name: "travel_quote_answer", description: "Price quote STEP 2: send the caller's answer to the current Harel health question (answer health question, next question). Returns the next question to ask, or — after the last one — the final price. מעביר תשובה לשאלת הבריאות הנוכחית.",
+    inputSchema: { type: "object", properties: {
+      quote_id: { type: "string" },
+      question_id: { type: "string", description: "The question_id of the question you just asked" },
+      answers: { description: "The caller's answer: true (yes) / false (no) for all travelers, or a list of true/false per traveler in trip order", oneOf: [{ type: "boolean" }, { type: "array", items: { type: "boolean" } }] },
+      pregnancy_week: { type: "number", description: "Only for the pregnancy question when the answer is yes" },
+      high_risk_pregnancy: { type: "boolean", description: "Only for the pregnancy question when the answer is yes" },
+    }, required: ["quote_id", "question_id", "answers"] } },
   { name: "check_agent_status", description: "Check if a staff member / employee is available to take a call (transfer): available / busy (on a call) / away. בודק זמינות עובד.",
     inputSchema: { type: "object", properties: { agent_name: { type: "string" } }, required: ["agent_name"] } },
   { name: "contact_agent", description: "Send a callback request / message by email to a specific staff member when they are unavailable, with the caller's name, phone and reason. שולח לעובד בקשת חזרה.",
@@ -768,13 +774,10 @@ async function runMcpTool(name, a = {}) {
       const r = await mcpInternal(`/api/crm/policy/members?policyIndex=${encodeURIComponent(a.policy_index)}`, { session: a.session });
       return { members: r.members ?? [] };
     }
-    case "travel_health_questions":
-      return {
-        how_to_ask: "Ask each question once for ALL travelers together (e.g. 'האם למישהו מהנוסעים...'). Ask a follow-up question (with 'if') only when its parent was answered yes, and ask who it applies to. Read the 'note' exceptions when relevant. Ask the pregnancy question only if a traveler is a woman up to age 41.",
-        questions: HEALTH_QUESTIONS,
-      };
     case "travel_price_quote":
-      return calculateQuote(a);
+      return startQuote(a);
+    case "travel_quote_answer":
+      return answerQuote(a);
     case "check_agent_status": {
       const r = await mcpInternal(`/api/agents/status?agent=${encodeURIComponent(a.agent_name)}`);
       return { status: r.status ?? "available" };

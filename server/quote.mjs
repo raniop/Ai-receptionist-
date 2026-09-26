@@ -4,6 +4,8 @@
 // the server does the arithmetic: the voice model is not reliable with tables.
 // All amounts are USD. Update the tables here when Harel publishes a new tariff.
 
+import crypto from "node:crypto";
+
 const r2 = (n) => Math.round(n * 100) / 100;
 
 // Base policy, per day. `short` = trips up to 14 days (USA: 20); `long` = the rate
@@ -291,4 +293,74 @@ export function calculateQuote(q) {
     warnings,
     disclaimer: "Estimate by the 2026 Harel tariff. Final price and terms are confirmed at purchase; pre-existing conditions are subject to the health questionnaire and medical underwriting.",
   };
+}
+
+// ── Step-by-step questionnaire ───────────────────────────────────────────────
+// Handing the model all the questions at once let it skip them and send "no"
+// for everything (a test call did exactly that). Instead the server walks the
+// questionnaire: one question per step, follow-ups queued only after a yes, and
+// the price is released only after the last answer.
+const QUOTE_TTL_MS = 30 * 60_000;
+const quotes = new Map(); // quote_id → { q, answers: [{}...], queue: [id...], at }
+const QUESTION = Object.fromEntries(HEALTH_QUESTIONS.map((x) => [x.id, x]));
+const ASK = (id, n) => {
+  const x = QUESTION[id];
+  return {
+    question_id: id,
+    text: x.text,
+    ...(x.note ? { note_if_asked: x.note } : {}),
+    ...(id === "pregnant" ? { also_collect: "if yes: the pregnancy week, and whether it is high-risk / multiple / the doctor advised not to travel" } : {}),
+    ...(n > 1 ? { ask_as: "one question for all travelers together, then note who answered yes" } : {}),
+  };
+};
+
+export function startQuote(q) {
+  for (const [k, v] of quotes) if (Date.now() - v.at >= QUOTE_TTL_MS) quotes.delete(k);
+  const probe = calculateQuote({ ...q, travelers: (q.travelers ?? []).map((t) => ({ ...t, health: { q1: false, q2: false, q3: false, q4: false } })) });
+  if (!probe.ok) return probe; // missing days / travelers
+  const travelers = q.travelers.map(({ health, ...t }) => t); // answers only come through answerQuote
+  const queue = ["q1", "q2", "q3", "q4"];
+  if (travelers.some((t) => Number(t.age) <= 41 && t.gender !== "male")) queue.push("pregnant");
+  const id = crypto.randomUUID().slice(0, 8);
+  quotes.set(id, { q: { ...q, travelers }, answers: travelers.map(() => ({})), queue, at: Date.now() });
+  return {
+    ok: true,
+    quote_id: id,
+    trip_summary: probe.trip_summary,
+    step: "Read trip_summary back to the caller and ask if it is correct. If it is wrong, start a new quote with the corrected details. If it is correct, ask the question below EXACTLY as written, then send the caller's answer with the answer tool (quote_id, question_id, answers).",
+    ask_now: ASK(queue[0], travelers.length),
+  };
+}
+
+/**
+ * @param {{ quote_id: string, question_id: string, answers: boolean|boolean[],
+ *   pregnancy_week?: number, high_risk_pregnancy?: boolean }} a
+ *   answers: true/false for all travelers, or one per traveler in trip order.
+ */
+export function answerQuote(a) {
+  const s = quotes.get(String(a.quote_id ?? ""));
+  if (!s) return { ok: false, error: "Unknown or expired quote_id. Start the quote again." };
+  if (a.question_id !== s.queue[0])
+    return { ok: false, error: `Answer the current question first.`, ask_now: ASK(s.queue[0], s.answers.length) };
+  const list = Array.isArray(a.answers) ? a.answers : s.answers.map(() => a.answers);
+  if (list.length !== s.answers.length || list.some((v) => typeof v !== "boolean"))
+    return { ok: false, error: `answers must be true/false for all travelers, or a list of ${s.answers.length} true/false in trip order.`, ask_now: ASK(s.queue[0], s.answers.length) };
+  const qid = s.queue.shift();
+  list.forEach((v, i) => {
+    s.answers[i][qid] = v;
+    if (qid === "pregnant" && v) {
+      if (a.pregnancy_week != null) s.answers[i].pregnancy_week = Number(a.pregnancy_week);
+      if (a.high_risk_pregnancy != null) s.answers[i].high_risk_pregnancy = a.high_risk_pregnancy === true;
+    }
+  });
+  // Follow-ups only after a yes, only for those who said yes (the rest: no).
+  const followUps = { q2: ["q2_1", "q2_2"], q3: ["q3_1"] }[qid] ?? [];
+  if (followUps.length && list.some(Boolean)) {
+    s.queue.unshift(...followUps);
+    list.forEach((v, i) => { if (!v) for (const f of followUps) s.answers[i][f] = false; });
+  }
+  s.at = Date.now();
+  if (s.queue.length) return { ok: true, quote_id: a.quote_id, ask_now: ASK(s.queue[0], s.answers.length) };
+  quotes.delete(String(a.quote_id));
+  return calculateQuote({ ...s.q, travelers: s.q.travelers.map((t, i) => ({ ...t, health: s.answers[i] })) });
 }
