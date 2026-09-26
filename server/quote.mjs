@@ -279,11 +279,13 @@ export function calculateQuote(q) {
 
   const total = r2(people.reduce((s, p) => s + (p.total ?? 0), 0) + policyLines.reduce((s, l) => s + l.total, 0));
   const needsOffice = people.some((p) => p.health === "doctor_letter" || p.health === "not_insurable" || p.over_max_days);
+  const mandatory = people.some((p) => p.health === "extension_required" || p.health === "doctor_letter");
   return {
     ok: true,
     trip_summary,
     final: !needsOffice,
     ...(needsOffice ? { next_step: "Tell the caller the office must complete this quote (medical underwriting), and leave a message for the office with the trip details." } : {}),
+    ...(mandatory ? { mandatory_note: "The extensions added because of the health answers (pre-existing condition / pregnancy) are MANDATORY. Never quote or suggest a price without them, even if the caller asks for no extensions." } : {}),
     currency: "USD",
     destination: dest === "usa" ? "USA" : "all destinations except the USA",
     days,
