@@ -194,8 +194,9 @@ export function calculateQuote(q) {
   if (missing.size) {
     return {
       ok: false,
-      error: "The health questions were not all answered. Ask the caller the missing questions (once for all travelers together), then call again with every answer as true or false for each traveler.",
+      error: "Before pricing, ask the caller Harel's health questions below EXACTLY as written — never your own questions. Ask each main question once for all travelers together. Ask a follow-up (if_yes_to) only after a yes to its parent. Ask the pregnancy question only if a traveler is a woman aged 18-42. Then call again with every answer as true or false for each traveler.",
       missing_questions: HEALTH_QUESTIONS.filter((q) => missing.has(q.id)).map((q) => ({ id: q.id, text: q.text, ...(q.note ? { note: q.note } : {}) })),
+      follow_up_questions: HEALTH_QUESTIONS.filter((q) => q.if || q.forWomen).map((q) => ({ id: q.id, ...(q.if ? { if_yes_to: q.if } : { only_for: "women aged 18-42" }), text: q.text })),
     };
   }
 
