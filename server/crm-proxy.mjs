@@ -469,17 +469,34 @@ function personName(c) {
 function sanitizeLookup(raw) {
   const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
   const customerName = list[0] ? pick(list[0], ["clientName"]) : null;
-  const policies = list.map((p) => {
+  // A policy that was changed has one row per version under the same policy
+  // number: policyDoc 0 is the original, 1..n the amendments. Each row holds the
+  // policy's full state after that change, and `total` is what that change cost
+  // (0, or negative for a refund). Collapse each number to its latest version,
+  // with the premium summed over all versions — otherwise one policy that was
+  // moved to new dates / a new destination reads as several policies.
+  const byNumber = new Map();
+  for (const p of list) {
+    const num = pick(p, ["fullPolicyID"]) ?? `idx:${pick(p, ["policyIndex"])}`;
+    if (!byNumber.has(num)) byNumber.set(num, []);
+    byNumber.get(num).push(p);
+  }
+  const ver = (p) => Number(pick(p, ["policyDoc"]) ?? 0);
+  const policies = [...byNumber.values()].map((rows) => {
+    rows.sort((a, b) => ver(a) - ver(b) || Number(pick(a, ["policyIndex"])) - Number(pick(b, ["policyIndex"])));
+    const p = rows[rows.length - 1];
     const endDate = pick(p, ["endDate"]);
+    const premium = rows.reduce((s, r) => s + (Number(pick(r, ["total"])) || 0), 0);
     return {
       policyNumber: pick(p, ["fullPolicyID", "policyDoc"]),
       policyIndex: pick(p, ["policyIndex"]),
       insuranceType: pick(p, ["areaName"]),
       startDate: pick(p, ["startDate"]),
       endDate,
-      premium: pick(p, ["total"]),
+      premium: Math.round(premium * 100) / 100,
       agentName: pick(p, ["agentName"]),
       active: isActive(endDate),
+      ...(rows.length > 1 ? { amendments: rows.length - 1, lastChanged: pick(p, ["issueDate"]) } : {}),
     };
   });
   return { customerName, count: policies.length, policies };
@@ -643,13 +660,23 @@ async function buildBundle(me) {
         const mine = (Array.isArray(cj?.customers) ? cj.customers : []).find((c) => String(c.personId) === me);
         coverages = (Array.isArray(mine?.riders) ? mine.riders : []).map((rd) => pick(rd, ["riderName"])).filter(Boolean);
       }
-      return { ...pol, startDate: day(pol.startDate), endDate: day(pol.endDate), coverages, members };
+      return {
+        ...pol,
+        startDate: day(pol.startDate),
+        endDate: day(pol.endDate),
+        ...(pol.lastChanged ? { lastChanged: day(pol.lastChanged) } : {}),
+        coverages,
+        members,
+      };
     }),
   );
   const older = ranked.slice(BUNDLE_DETAILED);
   return {
     customer_name: customerName,
     total_policies: policies.length,
+    ...(policies.some((p) => p.amendments)
+      ? { about_changes: "Each policy appears once, in its CURRENT version after its latest change. 'amendments' = how many times it was changed (dates, destination, insured); 'premium' = total paid across all changes. Never describe the versions of one policy as separate policies." }
+      : {}),
     policies: detailed,
     older_policies: older.slice(0, BUNDLE_OLDER).map((p) => ({
       policyIndex: p.policyIndex,
