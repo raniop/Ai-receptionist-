@@ -190,6 +190,15 @@ export function calculateQuote(q) {
   const travelers = Array.isArray(q.travelers) ? q.travelers : [];
   if (!travelers.length) return { ok: false, error: "need at least one traveler with an age" };
 
+  // A plain-Hebrew read-back of what the model understood, for the caller to
+  // confirm: in a test call "1-7 November" became "27 September-7 November".
+  const heDate = (s) => new Intl.DateTimeFormat("he-IL", { day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(s));
+  const ages = travelers.map((t) => t.age).join(", ");
+  const trip_summary =
+    `נסיעה ל${q.destination}` +
+    (q.start_date && q.end_date ? `, מ-${heDate(q.start_date)} עד ${heDate(q.end_date)}` : "") +
+    `, ${days} ימים, ${travelers.length === 1 ? `נוסע אחד בגיל ${ages}` : `${travelers.length} נוסעים בגילאי ${ages}`}`;
+
   // Never price without the full health declaration: the voice model tends to
   // ask question 1 and assume "no" for the rest. Every traveler needs an
   // explicit answer (true/false) to questions q1-q4.
@@ -199,9 +208,10 @@ export function calculateQuote(q) {
   if (missing.size) {
     return {
       ok: false,
-      error: "Before pricing, ask the caller Harel's health questions below EXACTLY as written — never your own questions. Ask each main question once for all travelers together. Ask a follow-up (if_yes_to) only after a yes to its parent. Ask the pregnancy question only if a traveler is a woman up to age 41. Then call again with every answer as true or false for each traveler.",
+      error: "Before pricing: FIRST read trip_summary back to the caller and ask if it is correct (fix the dates, ages or destination if not). Then ask Harel's health questions below EXACTLY as written — never your own questions. Ask each main question once for all travelers together. Ask a follow-up (if_yes_to) only after a yes to its parent. Ask the pregnancy question only if a traveler is a woman up to age 41. Then call again with every answer as true or false for each traveler.",
+      trip_summary,
       missing_questions: HEALTH_QUESTIONS.filter((q) => missing.has(q.id)).map((q) => ({ id: q.id, text: q.text, ...(q.note ? { note: q.note } : {}) })),
-      follow_up_questions: HEALTH_QUESTIONS.filter((q) => q.if || q.forWomen).map((q) => ({ id: q.id, ...(q.if ? { if_yes_to: q.if } : { only_for: "women aged 18-42" }), text: q.text })),
+      follow_up_questions: HEALTH_QUESTIONS.filter((q) => q.if || q.forWomen).map((q) => ({ id: q.id, ...(q.if ? { if_yes_to: q.if } : { only_for: `women ${q.forWomen}` }), text: q.text })),
     };
   }
 
@@ -269,6 +279,7 @@ export function calculateQuote(q) {
   const needsOffice = people.some((p) => p.health === "doctor_letter" || p.health === "not_insurable" || p.over_max_days);
   return {
     ok: true,
+    trip_summary,
     final: !needsOffice,
     ...(needsOffice ? { next_step: "Tell the caller the office must complete this quote (medical underwriting), and leave a message for the office with the trip details." } : {}),
     currency: "USD",
