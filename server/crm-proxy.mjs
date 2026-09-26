@@ -636,7 +636,7 @@ const MCP_TOOLS = [
       travelers: { type: "array", description: "One entry per traveler", items: { type: "object", properties: {
         age: { type: "number" },
         extensions: { type: "array", items: { type: "string" }, description: "Extensions only for this traveler (same names as below)" },
-        health: { type: "object", description: "This traveler's answers to the health questions, true = yes, false = no. q1, q2, q3, q4, q5 are REQUIRED for every traveler (the quote is refused without them). Follow-ups only when relevant: q2_1, q2_2, q3_1, q5_1, pregnant, pregnancy_week (number), high_risk_pregnancy." },
+        health: { type: "object", description: "This traveler's answers to the health questions, true = yes, false = no. q1, q2, q3, q4 are REQUIRED for every traveler (the quote is refused without them). Follow-ups only when relevant: q2_1, q2_2, q3_1, pregnant, pregnancy_week (number), high_risk_pregnancy." },
       }, required: ["age"] } },
       extensions: { type: "array", items: { type: "string" }, description: "Extensions for all travelers: baggage, cancellation_5000, cancellation_10000, extreme_sports, winter_sports, professional_sports, laptop, phone, rental_car, rental_car_6000, bicycle_2500, bicycle_4500, bicycle_6000, personal_accident. (pre_existing and pregnancy are added automatically from the health answers.)" },
       driver_age: { type: "number", description: "Age of the rental-car driver, if a rental car extension is chosen" },
@@ -770,7 +770,7 @@ async function runMcpTool(name, a = {}) {
     }
     case "travel_health_questions":
       return {
-        how_to_ask: "Ask each question once for ALL travelers together (e.g. 'האם למישהו מהנוסעים...'). Ask a follow-up question (with 'if') only when its parent was answered yes, and ask who it applies to. Read the 'note' exceptions when relevant. Ask the pregnancy question only if a traveler is a woman aged 18-42.",
+        how_to_ask: "Ask each question once for ALL travelers together (e.g. 'האם למישהו מהנוסעים...'). Ask a follow-up question (with 'if') only when its parent was answered yes, and ask who it applies to. Read the 'note' exceptions when relevant. Ask the pregnancy question only if a traveler is a woman up to age 41.",
         questions: HEALTH_QUESTIONS,
       };
     case "travel_price_quote":

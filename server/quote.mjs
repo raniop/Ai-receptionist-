@@ -94,7 +94,7 @@ function extensionDaily(ext, age, dest, all) {
     case "laptop": return { rate: 2.0 };
     case "phone": return { rate: 1.6 };
     case "pregnancy":
-      return age <= 42 ? { rate: dest === "usa" ? 10.0 : 5.0 } : { error: "available up to age 42" };
+      return age <= 41 ? { rate: dest === "usa" ? 10.0 : 5.0 } : { error: "available up to age 41" };
     case "pre_existing": {
       const b = byAge(PRE_EXISTING, age);
       return b ? { rate: b.rate, note: "subject to medical underwriting (health questionnaire)" } : { error: "not available at this age" };
@@ -110,22 +110,23 @@ function extensionDaily(ext, age, dest, all) {
   }
 }
 
-// ── Health declaration (Harel form, edition 12/2024, section ד) ─────────────
+// ── Health declaration (Harel medical questionnaire 2026) ────────────────────
 // Dalit asks these for all travelers at once; the server decides the outcome.
+// Outcomes not spelled out on the form were confirmed by the office: a "yes" to
+// regular medication, to 1.1/1.2 or to head scans on a short (≤15 days, not USA)
+// trip, and surgery/hospitalization more than 3 months ago, all make the
+// pre-existing condition extension mandatory.
 export const HEALTH_QUESTIONS = [
-  { id: "q1", text: "האם אחת ממטרות הנסיעה היא אחת או יותר מהבאים: קבלת ייעוץ, אבחון או טיפול רפואי?",
-    note: "לא כולל טיפולי שיניים, השתלת שיער, טיפולים קוסמטיים וכדומה, כל עוד לא מדובר בהליך עם הרדמה מלאה." },
-  { id: "q2", text: "האם בחצי השנה האחרונה לקחת תרופות באופן קבוע או עברת טיפול אחר, או שהמליצו לך לקחת תרופות או לעבור טיפול?",
-    note: "אין צורך לענות כן על: טיפול הורמונלי בגיל המעבר, ויטמינים ותוספי מזון, אלרגיה, גלולות, כולסטרול, תת פעילות בלוטת המגן, לחץ דם, סוכרת, בעיות שינה, אסתמה, ערמונית מוגדלת, מיגרנות." },
-  { id: "q2_1", if: "q2", text: "האם אתה בטיפול או שהומלץ לך על דיאליזה, עירויי דם, מרפאת כאב, או טיפול אונקולוגי (הקרנות, כימותרפיה, ביולוגי או נוגד דחייה)?" },
-  { id: "q2_2", if: "q2", text: "האם אובחנת באחד מאלה: מחלת כליות כרונית; מחלה במערכת העצבים כמו ירידה בזיכרון, אלצהיימר, דמנציה או חוסר יציבות; קרוהן עם התקפים בשנה האחרונה; מחלת כבד כרונית; מחלה ניוונית כמו ALS; סיסטיק פיברוזיס; COPD; אי ספיקת לב; אירוע מוחי בשנה האחרונה?" },
-  { id: "q3", text: "האם בחצי השנה האחרונה אושפזת (כולל אשפוז יום) או עברת ניתוח הקשור לאחד מאלה: מחלת נפש, ראש, לב (כולל צנתור), כיס המרה ודרכי העיכול, כליות ודרכי השתן, ריאות, עמוד שדרה?",
-    note: "לא כולל ניתוח קוסמטי אסתטי." },
+  { id: "q1", text: "האם אחת ממטרות הנסיעה היא קבלת טיפול רפואי, ייעוץ רפואי או אבחון רפואי?",
+    note: "אין צורך לענות כן על טיפולי שיניים, השתלת שיער וטיפולים קוסמטיים, כל עוד לא מדובר בהליך עם הרדמה מלאה." },
+  { id: "q2", text: "האם בחצי השנה האחרונה אתה מקבל תרופות באופן קבוע או עברת טיפול רפואי אחר, או שהומלץ לך לקחת תרופות או לעבור טיפול רפואי?",
+    note: "אין צורך לענות כן על: טיפול הורמונלי בגיל המעבר, ויטמינים או תוספי מזון, אלרגיה, גלולות למניעת היריון, כולסטרול, תת פעילות בלוטת המגן, קשב וריכוז, לחץ דם, בעיות שינה, צרבות, ערמונית מוגדלת, מיגרנות, תרופת הרזיה שלא ניתנה בגלל סוכרת, אקנה ונשירת שיער." },
+  { id: "q2_1", if: "q2", text: "האם הטיפול הוא לאחד מהמצבים הבאים: אי ספיקת כליות עם דיאליזה; מחלת דם עם עירויי דם או הקזות; מחלה ממארת בטיפול פעיל של הקרנות, כימותרפיה או טיפול ביולוגי; ירידה בזיכרון או בהתמצאות שמצריכה השגחה או ליווי; מחלה במערכת העצבים, כולל אירוע מוחי או מחלה ניוונית כמו ALS, שגורמת לחוסר יציבות או לנפילות חוזרות; מצב שדורש מחולל חמצן; שחמת כבד עם סיבוכים כמו דימומים, צורך בהשתלה או הצטברות נוזלים, או אי ספיקת כבד?" },
+  { id: "q2_2", if: "q2", text: "האם הטיפול הוא בגלל אי ספיקת לב עם אחד מאלה: בצקות, או תרופות להוצאת נוזלים מהגוף, או קוצר נשימה במנוחה או במאמץ קל כמו הליכה או עלייה במדרגות?" },
+  { id: "q3", text: "האם בחצי השנה האחרונה עברת ניתוח או שהומלץ לך על ניתוח, או שאושפזת יותר משלושה ימים או שהומלץ לך על אשפוז, בגלל אחד מאלה: מחלת נפש, ראש, לב (כולל צנתור), כיס המרה ודרכי המרה, כליות (כולל אבנים בכליות ובדרכי השתן), דרכי העיכול והלבלב, ריאות, עמוד שדרה?" },
   { id: "q3_1", if: "q3", text: "האם הניתוח או האשפוז כבר בוצע, ועברו מאז יותר משלושה חודשים?" },
-  { id: "q4", text: "האם בחצי השנה האחרונה הופנית לבדיקות שטרם בוצעו, או שתוצאותיהן היו לא תקינות: MRI או CT של ראש או עמוד שדרה, אקו לב, דופלר עורקי צוואר, בדיקת מאמץ או הולטר לב?" },
-  { id: "q5", text: "האם בשנתיים האחרונות אובחנת או עברת: אירוע מוחי מכל סוג, מחלת לב (למשל התקף לב, צנתור, ניתוח מעקפים, הפרעות קצב), או היצרות בעורקי הצוואר?" },
-  { id: "q5_1", if: "q5", text: "האם האירוע או הניתוח האחרון היה במהלך 12 החודשים האחרונים?" },
-  { id: "pregnant", forWomen: "18-42", text: "האם את בהיריון? אם כן, באיזה שבוע, והאם זה היריון בסיכון או מרובה עוברים, או שהרופא המליץ לא לטוס?" },
+  { id: "q4", text: "האם בחצי השנה האחרונה הופנית לבדיקת MRI או CT של הראש שעוד לא בוצעה, או שתוצאותיה לא היו תקינות או כללו ממצא חריג?" },
+  { id: "pregnant", forWomen: "up to age 41", text: "האם את בהיריון? אם כן, באיזה שבוע, והאם זה היריון בסיכון או מרובה עוברים, או שהרופא המליץ לא לנסוע לחוץ לארץ?" },
 ];
 
 /**
@@ -137,28 +138,31 @@ export function assessHealth(h = {}, { dest, days, age } = {}) {
   const reasons = [];
   const add = new Set();
   let letter = false;
-  if (yes("q1")) return { status: "not_insurable", reasons: ["the trip is for medical consultation or treatment (question 1)"] };
+  // Medical documents are needed only for trips longer than 15 days or to the USA.
+  const docsTrip = (days ?? 0) > 15 || dest === "usa";
+  if (yes("q1")) return { status: "not_insurable", reasons: ["the trip is for medical treatment, consultation or diagnosis (question 1)"] };
   if (yes("q2")) {
-    if (yes("q2_1") || yes("q2_2")) { letter = true; reasons.push("question 2.1/2.2 — a current letter from the treating doctor is required"); }
-    else { add.add("pre_existing"); reasons.push("regular medication or treatment (question 2) — the pre-existing condition extension is required"); }
+    add.add("pre_existing");
+    if ((yes("q2_1") || yes("q2_2")) && docsTrip) { letter = true; reasons.push("a condition from question 1.1/1.2 on a trip over 15 days or to the USA — current medical documents are required"); }
+    else reasons.push("regular medication or treatment — the pre-existing condition extension is required");
   }
   if (yes("q3")) {
-    if (yes("q3_1")) { add.add("pre_existing"); reasons.push("hospitalization/surgery more than 3 months ago (question 3.1) — the pre-existing condition extension is required"); }
-    else { letter = true; reasons.push("recent or planned hospitalization/surgery (question 3) — a current doctor's letter is required"); }
+    if (yes("q3_1")) { add.add("pre_existing"); reasons.push("surgery/hospitalization more than 3 months ago — the pre-existing condition extension is required"); }
+    else { letter = true; reasons.push("recent or recommended surgery/hospitalization (question 2) — current medical documents are required"); }
   }
-  if (yes("q4")) { letter = true; reasons.push("pending or abnormal tests (question 4) — a current doctor's letter is required"); }
-  if (yes("q5")) {
-    if (dest === "usa" || yes("q5_1")) { letter = true; reasons.push("heart/stroke/carotid in the last two years (question 5) — a current doctor's letter is required"); }
-    else { add.add("pre_existing"); reasons.push("heart/stroke/carotid more than 12 months ago (question 5.1) — the pre-existing condition extension is required"); }
+  if (yes("q4")) {
+    add.add("pre_existing");
+    if (docsTrip) { letter = true; reasons.push("pending or abnormal head MRI/CT on a trip over 15 days or to the USA — current medical documents are required"); }
+    else reasons.push("pending or abnormal head MRI/CT — the pre-existing condition extension is required");
   }
   if (yes("pregnant")) {
     const week = Number(h.pregnancy_week);
     const weekAtEnd = Number.isFinite(week) ? week + (days ?? 0) / 7 : NaN;
-    if (yes("high_risk_pregnancy")) return { status: "not_insurable", reasons: ["high-risk or multiple pregnancy, or the doctor advised not to fly (question 6.2)"] };
-    if (age > 42 || (Number.isFinite(weekAtEnd) && weekAtEnd > 32))
-      return { status: "not_insurable", reasons: ["the pregnancy extension ends at week 32 or age 42 before the trip ends, so the trip can't be insured"] };
+    if (yes("high_risk_pregnancy")) return { status: "not_insurable", reasons: ["high-risk or multiple pregnancy, or the doctor advised not to travel"] };
+    if (age > 41 || (Number.isFinite(weekAtEnd) && weekAtEnd > 32))
+      return { status: "not_insurable", reasons: ["pregnancy cover is only up to week 32 and age 41, so this trip can't be insured"] };
     add.add("pregnancy");
-    reasons.push("pregnancy — the pregnancy extension is required");
+    reasons.push("pregnancy — the pregnancy extension is added automatically");
   }
   if (letter) return { status: "doctor_letter", add: [...add], reasons };
   return { status: add.size ? "extension_required" : "ok", add: [...add], reasons };
@@ -188,14 +192,14 @@ export function calculateQuote(q) {
 
   // Never price without the full health declaration: the voice model tends to
   // ask question 1 and assume "no" for the rest. Every traveler needs an
-  // explicit answer (true/false) to questions 1-5.
-  const REQUIRED = ["q1", "q2", "q3", "q4", "q5"];
+  // explicit answer (true/false) to questions q1-q4.
+  const REQUIRED = ["q1", "q2", "q3", "q4"];
   const missing = new Set();
   for (const t of travelers) for (const k of REQUIRED) if (!(t.health && k in t.health)) missing.add(k);
   if (missing.size) {
     return {
       ok: false,
-      error: "Before pricing, ask the caller Harel's health questions below EXACTLY as written — never your own questions. Ask each main question once for all travelers together. Ask a follow-up (if_yes_to) only after a yes to its parent. Ask the pregnancy question only if a traveler is a woman aged 18-42. Then call again with every answer as true or false for each traveler.",
+      error: "Before pricing, ask the caller Harel's health questions below EXACTLY as written — never your own questions. Ask each main question once for all travelers together. Ask a follow-up (if_yes_to) only after a yes to its parent. Ask the pregnancy question only if a traveler is a woman up to age 41. Then call again with every answer as true or false for each traveler.",
       missing_questions: HEALTH_QUESTIONS.filter((q) => missing.has(q.id)).map((q) => ({ id: q.id, text: q.text, ...(q.note ? { note: q.note } : {}) })),
       follow_up_questions: HEALTH_QUESTIONS.filter((q) => q.if || q.forWomen).map((q) => ({ id: q.id, ...(q.if ? { if_yes_to: q.if } : { only_for: "women aged 18-42" }), text: q.text })),
     };
