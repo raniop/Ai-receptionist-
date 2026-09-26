@@ -375,12 +375,19 @@ async function crmFetch(path, init = {}, retry = true) {
 // the CRM holds stray duplicates keyed by those variants — "0051208775" is an old
 // phoneless copy of "051208775". Try the canonical 9-digit form first, then the
 // spellings as given, and remember which record got the OTP so verify uses it too.
+// The zero-padded form is only tried when it passes the ID check digit: padding
+// a short or misheard number ("12345" → 000012345) can land on a stranger's real
+// record and text them. The number as given is always tried (e.g. passports).
+function validIsraeliId(id) {
+  return /^\d{9}$/.test(id) &&
+    [...id].reduce((s, ch, i) => { let d = +ch * ((i % 2) + 1); if (d > 9) d -= 9; return s + d; }, 0) % 10 === 0;
+}
 function idCandidates(id) {
   const raw = String(id ?? "").trim().replace(/[\s-]/g, "");
   if (!/^\d+$/.test(raw)) return [raw]; // passport or other — as given
   const core = raw.replace(/^0+/, "") || "0";
-  const canonical = core.length <= 9 ? core.padStart(9, "0") : raw;
-  return [...new Set([canonical, raw, core])];
+  const padded = core.length <= 9 ? core.padStart(9, "0") : null;
+  return [...new Set([...(padded && validIsraeliId(padded) ? [padded] : []), raw])];
 }
 const OTP_PERSON_TTL_MS = 15 * 60_000;
 const otpPerson = new Map(); // canonical id → { personId, at }
