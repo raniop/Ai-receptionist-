@@ -370,6 +370,26 @@ async function crmFetch(path, init = {}, retry = true) {
   return res;
 }
 
+// ── Israeli ID normalization ─────────────────────────────────────────────────
+// Callers (and the voice model) say IDs with extra or missing leading zeros, and
+// the CRM holds stray duplicates keyed by those variants — "0051208775" is an old
+// phoneless copy of "051208775". Try the canonical 9-digit form first, then the
+// spellings as given, and remember which record got the OTP so verify uses it too.
+function idCandidates(id) {
+  const raw = String(id ?? "").trim().replace(/[\s-]/g, "");
+  if (!/^\d+$/.test(raw)) return [raw]; // passport or other — as given
+  const core = raw.replace(/^0+/, "") || "0";
+  const canonical = core.length <= 9 ? core.padStart(9, "0") : raw;
+  return [...new Set([canonical, raw, core])];
+}
+const OTP_PERSON_TTL_MS = 15 * 60_000;
+const otpPerson = new Map(); // canonical id → { personId, at }
+function otpPersonFor(id) {
+  const c = idCandidates(id)[0];
+  const hit = otpPerson.get(c);
+  return hit && Date.now() - hit.at < OTP_PERSON_TTL_MS ? hit.personId : c;
+}
+
 // ── our short-lived customer session token (HMAC, scoped to one personId) ─────
 function signSession(personId) {
   const payload = Buffer.from(JSON.stringify({ personId, exp: Date.now() + SESSION_TTL_MS })).toString("base64url");
@@ -693,7 +713,7 @@ async function runMcpTool(name, a = {}) {
     case "start_policy_check":
     case "send_policy_otp": {
       const r = await mcpInternal("/api/crm/otp/send", { method: "POST", body: { personId: a.person_id } });
-      if (r.status === 200) prefetchBundle(a.person_id); // warm it while the caller reads the SMS
+      if (r.status === 200) prefetchBundle(r.personId ?? a.person_id); // warm it while the caller reads the SMS
       if (r.status === 200) return { ok: true, phone_hint: r.phoneHint ?? null };
       if (r.error === "id_not_found")
         return { ok: false, reason: "id_not_found", person_id_tried: a.person_id,
@@ -789,26 +809,38 @@ const server = http.createServer(async (req, res) => {
     // 1) send OTP — the caller gives ONLY their ID; we look up the phone on file and
     //    text the code there. The caller can never redirect the OTP to another number.
     if (req.method === "POST" && url.pathname === "/api/crm/otp/send") {
-      const { personId } = await readJson(req);
-      if (!personId) return send(res, 400, { error: "personId is required" });
-      // Resolve the registered mobile by ID.
-      const pr = await crmFetch(`/api/Policy/GetByPersonId?personId=${encodeURIComponent(String(personId))}`);
-      if (!pr.ok) return send(res, 502, { error: "lookup_failed" });
-      const rec = await pr.json().catch(() => null);
-      const person = Array.isArray(rec) ? rec[0] : rec;
+      const { personId: said } = await readJson(req);
+      if (!said) return send(res, 400, { error: "personId is required" });
+      // Resolve the registered mobile by ID, trying the canonical 9-digit form first.
       // Unknown ID → the CRM answers 200 with {message:"No policies found…"} and a
-      // record full of nulls. Tell it apart from "found, but no usable phone" so
-      // Dalit can ask the caller to repeat a mistyped ID.
-      if (!person?.personId) return send(res, 404, { error: "id_not_found" });
-      // Only text a real Israeli mobile — some records hold junk like "972".
-      const phone = ["mobile", "phone"]
-        .map((k) => (person[k] ? normalizePhone(person[k]) : ""))
-        .find((p) => /^05\d{8}$/.test(p));
-      if (!phone) return send(res, 404, { error: "no_phone_on_file" });
+      // record full of nulls; tell that apart from "found, but no usable phone" so
+      // Dalit can ask the caller to repeat a misheard ID.
+      const candidates = idCandidates(said);
+      let anyOk = false, found = false, chosen = null;
+      for (const id of candidates) {
+        const pr = await crmFetch(`/api/Policy/GetByPersonId?personId=${encodeURIComponent(id)}`);
+        if (!pr.ok) continue;
+        anyOk = true;
+        const rec = await pr.json().catch(() => null);
+        const person = Array.isArray(rec) ? rec[0] : rec;
+        if (!person?.personId) continue;
+        found = true;
+        // Only text a real Israeli mobile — some records hold junk like "972".
+        const phone = ["mobile", "phone"]
+          .map((k) => (person[k] ? normalizePhone(person[k]) : ""))
+          .find((p) => /^05\d{8}$/.test(p));
+        if (phone) { chosen = { personId: id, phone }; break; }
+      }
+      if (!anyOk) return send(res, 502, { error: "lookup_failed" });
+      if (!found) return send(res, 404, { error: "id_not_found" });
+      if (!chosen) return send(res, 404, { error: "no_phone_on_file" });
+      const { personId, phone } = chosen;
+      for (const [k, v] of otpPerson) if (Date.now() - v.at >= OTP_PERSON_TTL_MS) otpPerson.delete(k);
+      otpPerson.set(candidates[0], { personId, at: Date.now() });
       const r = await crmFetch("/api/Auth/sendotp", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ personId: String(personId), phoneNumber: phone }),
+        body: JSON.stringify({ personId, phoneNumber: phone }),
       });
       if (!r.ok) {
         const detail = await r.text().catch(() => "");
@@ -818,13 +850,14 @@ const server = http.createServer(async (req, res) => {
           ...(process.env.CRM_DEBUG_FIELDS === "1" ? { crmStatus: r.status, crmBody: detail.slice(0, 200), triedPhone: phone } : {}),
         });
       }
-      return send(res, 200, { ok: true, phoneHint: maskPhone(phone) });
+      return send(res, 200, { ok: true, phoneHint: maskPhone(phone), personId });
     }
 
     // 2) verify OTP → mint a session scoped to this personId
     if (req.method === "POST" && url.pathname === "/api/crm/otp/verify") {
-      const { personId, code } = await readJson(req);
-      if (!personId || !code) return send(res, 400, { error: "personId and code are required" });
+      const { personId: said, code } = await readJson(req);
+      if (!said || !code) return send(res, 400, { error: "personId and code are required" });
+      const personId = otpPersonFor(said); // the record that was actually texted
       const r = await crmFetch("/api/Auth/verifyotp", {
         method: "POST",
         headers: { "content-type": "application/json" },
