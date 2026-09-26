@@ -185,6 +185,20 @@ export function calculateQuote(q) {
   const travelers = Array.isArray(q.travelers) ? q.travelers : [];
   if (!travelers.length) return { ok: false, error: "need at least one traveler with an age" };
 
+  // Never price without the full health declaration: the voice model tends to
+  // ask question 1 and assume "no" for the rest. Every traveler needs an
+  // explicit answer (true/false) to questions 1-5.
+  const REQUIRED = ["q1", "q2", "q3", "q4", "q5"];
+  const missing = new Set();
+  for (const t of travelers) for (const k of REQUIRED) if (!(t.health && k in t.health)) missing.add(k);
+  if (missing.size) {
+    return {
+      ok: false,
+      error: "The health questions were not all answered. Ask the caller the missing questions (once for all travelers together), then call again with every answer as true or false for each traveler.",
+      missing_questions: HEALTH_QUESTIONS.filter((q) => missing.has(q.id)).map((q) => ({ id: q.id, text: q.text, ...(q.note ? { note: q.note } : {}) })),
+    };
+  }
+
   const tariff = BASE[dest];
   const tripExt = (q.extensions ?? []).filter((e) => !RENTAL[e]);
   const warnings = [];
