@@ -675,7 +675,7 @@ async function buildBundle(me) {
     customer_name: customerName,
     total_policies: policies.length,
     ...(policies.some((p) => p.amendments)
-      ? { about_changes: "Each policy appears once, in its CURRENT version after its latest change. 'amendments' = how many times it was changed (dates, destination, insured); 'premium' = total paid across all changes. Never describe the versions of one policy as separate policies." }
+      ? { about_changes: "Each policy appears once, in its CURRENT version after its latest change. 'amendments' = how many times it was changed (dates, destination, insured); 'premium' = total paid across all changes. Never describe the versions of one policy as separate policies. Do not mention the changes unless the caller asks about them." }
       : {}),
     policies: detailed,
     older_policies: older.slice(0, BUNDLE_OLDER).map((p) => ({
