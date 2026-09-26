@@ -8,6 +8,7 @@ const r2 = (n) => Math.round(n * 100) / 100;
 
 // Base policy, per day. `short` = trips up to 14 days (USA: 20); `long` = the rate
 // "from day 15" (USA: "from day 21"), applied to the days after the short period.
+// Both this split and counting departure + return days were confirmed by the office.
 // Both include search & rescue at $0.20/day, which the caller may drop.
 const BASE = {
   other: {
