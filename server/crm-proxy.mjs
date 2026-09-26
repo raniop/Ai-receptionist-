@@ -29,6 +29,7 @@ import { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { startQuote, answerQuote } from "./quote.mjs";
+import { officeStatus } from "./office-hours.mjs";
 import nodemailer from "nodemailer";
 
 const {
@@ -636,7 +637,7 @@ const MCP_TOOLS = [
         gender: { type: "string", description: "male / female, if known (the pregnancy question is skipped for men)" },
         extensions: { type: "array", items: { type: "string" }, description: "Extensions only for this traveler (same names as below)" },
       }, required: ["age"] } },
-      extensions: { type: "array", items: { type: "string" }, description: "Extensions for all travelers: baggage, cancellation_5000, cancellation_10000, extreme_sports, winter_sports, professional_sports, laptop, phone, rental_car, rental_car_6000, bicycle_2500, bicycle_4500, bicycle_6000, personal_accident. (pre_existing and pregnancy are added automatically from the health answers.)" },
+      extensions: { type: "array", items: { type: "string" }, description: "Extensions for all travelers: baggage, cancellation_5000 (BASIC trip cancellation/curtailment, up to $5,000 — offer this one first), cancellation_10000 (EXTENDED, up to $10,000 — only if the caller asks to extend), extreme_sports, winter_sports, professional_sports, laptop, phone, rental_car, rental_car_6000, bicycle_2500, bicycle_4500, bicycle_6000, personal_accident. (pre_existing and pregnancy are added automatically from the health answers.)" },
       driver_age: { type: "number", description: "Age of the rental-car driver, if a rental car extension is chosen" },
       remove_search_rescue: { type: "boolean", description: "True only if the caller asks to drop search & rescue ($0.20/day)" },
     }, required: ["destination", "travelers"] } },
@@ -648,7 +649,7 @@ const MCP_TOOLS = [
       pregnancy_week: { type: "number", description: "Only for the pregnancy question when the answer is yes" },
       high_risk_pregnancy: { type: "boolean", description: "Only for the pregnancy question when the answer is yes" },
     }, required: ["quote_id", "question_id", "answers"] } },
-  { name: "check_agent_status", description: "Check if a staff member / employee is available to take a call (transfer): available / busy (on a call) / away. בודק זמינות עובד.",
+  { name: "check_agent_status", description: "BEFORE ANY TRANSFER: check whether the office is open now (business hours, Friday/Saturday, Jewish holidays) and whether a staff member / employee is available to take a call. Returns office_open, office_status, next_business_day and the staff status (available / busy / away / office_closed). Transfer only when office_open is true and status is available. בודק אם המשרד פתוח ואם העובד זמין.",
     inputSchema: { type: "object", properties: { agent_name: { type: "string" } }, required: ["agent_name"] } },
   { name: "contact_agent", description: "Send a callback request / message by email to a specific staff member when they are unavailable, with the caller's name, phone and reason. שולח לעובד בקשת חזרה.",
     inputSchema: { type: "object", properties: { agent_name: { type: "string" }, caller_name: { type: "string" }, caller_phone: { type: "string" }, reason: { type: "string" } }, required: ["agent_name", "caller_name", "caller_phone"] } },
@@ -779,8 +780,12 @@ async function runMcpTool(name, a = {}) {
     case "travel_quote_answer":
       return answerQuote(a);
     case "check_agent_status": {
-      const r = await mcpInternal(`/api/agents/status?agent=${encodeURIComponent(a.agent_name)}`);
-      return { status: r.status ?? "available" };
+      // The office clock is decided here; the model got open/closed wrong.
+      const office = officeStatus();
+      if (!office.office_open)
+        return { ...office, status: "office_closed", instruction: "Do NOT transfer. Tell the caller the office is closed, take their details and send the staff member a message; say they will get back to the caller on the next business day." };
+      const r = await mcpInternal(`/api/agents/status?agent=${encodeURIComponent(a.agent_name ?? "")}`);
+      return { ...office, status: r.status ?? "available" };
     }
     case "contact_agent": {
       const r = await mcpInternal("/api/notify/agent", { method: "POST", body: { agent_name: a.agent_name, caller_name: a.caller_name, caller_phone: a.caller_phone, reason: a.reason } });

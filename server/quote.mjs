@@ -329,8 +329,11 @@ export function startQuote(q) {
     ok: true,
     quote_id: id,
     trip_summary: probe.trip_summary,
-    step: "Read trip_summary back to the caller and ask if it is correct. If it is wrong, start a new quote with the corrected details. If it is correct, ask the question below EXACTLY as written, then send the caller's answer with the answer tool (quote_id, question_id, answers).",
+    step: "Read trip_summary back to the caller and ask if it is correct. If it is wrong, start a new quote with the corrected details. If it is correct, ask ask_now EXACTLY as written. After each answer, send it with the answer tool AND, in the same turn, already ask the next question from questions_in_order (a follow-up only right after a yes to its parent), so the caller doesn't wait. If the tool's ask_now differs from what you asked, ask the tool's question instead.",
     ask_now: ASK(queue[0], travelers.length),
+    questions_in_order: queue.flatMap((id) => [id, ...({ q2: ["q2_1", "q2_2"], q3: ["q3_1"] }[id] ?? [])]).map((id) => ({
+      question_id: id, text: QUESTION[id].text, ...(QUESTION[id].if ? { only_after_yes_to: QUESTION[id].if } : {}),
+    })),
   };
 }
 
