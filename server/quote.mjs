@@ -197,7 +197,7 @@ export function calculateQuote(q) {
   const heDate = (s) => new Intl.DateTimeFormat("he-IL", { day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(s));
   const ages = travelers.map((t) => t.age).join(", ");
   const trip_summary =
-    `נסיעה ל${q.destination}` +
+    `נסיעה ל${dest === "usa" ? "ארצות הברית" : q.destination}` +
     (q.start_date && q.end_date ? `, מ-${heDate(q.start_date)} עד ${heDate(q.end_date)}` : "") +
     `, ${days} ימים, ${travelers.length === 1 ? `נוסע אחד בגיל ${ages}` : `${travelers.length} נוסעים בגילאי ${ages}`}`;
 
@@ -280,6 +280,23 @@ export function calculateQuote(q) {
   const total = r2(people.reduce((s, p) => s + (p.total ?? 0), 0) + policyLines.reduce((s, l) => s + l.total, 0));
   const needsOffice = people.some((p) => p.health === "doctor_letter" || p.health === "not_insurable" || p.over_max_days);
   const mandatory = people.some((p) => p.health === "extension_required" || p.health === "doctor_letter");
+  if (needsOffice) {
+    // Never hand the model a price it can't sell: in a real call Dalit read out
+    // $1,561 for a trip that can't be insured online (64 days at age 80, max 60),
+    // and gave the wrong reason. Return only the exact reasons.
+    const reasons = people.flatMap((p) => [
+      ...(p.over_max_days ? [`the trip is ${days} days, but at age ${p.age} the maximum is ${p.over_max_days} days`] : []),
+      ...(p.health === "not_insurable" || p.health === "doctor_letter" ? p.reasons ?? p.health_reasons ?? [] : []),
+    ]);
+    return {
+      ok: true,
+      trip_summary,
+      final: false,
+      do_not_give_price: true,
+      office_reasons: reasons,
+      next_step: "Do NOT say any price or amount. Explain the reason above to the caller in simple words, say the office will get back to them with the options, and leave a message for the office with the trip details and this reason.",
+    };
+  }
   return {
     ok: true,
     trip_summary,

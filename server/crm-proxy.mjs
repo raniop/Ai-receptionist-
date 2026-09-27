@@ -656,7 +656,7 @@ const MCP_TOOLS = [
     inputSchema: { type: "object", properties: { full_name: { type: "string" }, phone: { type: "string" }, topic: { type: "string" } }, required: ["full_name", "phone"] } },
   { name: "travel_price_quote", description: "Price quote STEP 1: start a travel insurance price quote (how much does it cost, premium, Harel 2026 tariff). Give destination, trip dates or days, and each traveler's age (and gender if known). Returns a trip summary to confirm with the caller, a quote_id, and the FIRST Harel health question to ask. The price comes only after all health answers are sent with travel_quote_answer. מתחיל הצעת מחיר לביטוח נסיעות.",
     inputSchema: { type: "object", properties: {
-      destination: { type: "string", description: "Country or region, e.g. Italy, Thailand, USA" },
+      destination: { type: "string", description: "Country or region in HEBREW as the caller said it, e.g. איטליה, תאילנד, ארצות הברית" },
       days: { type: "number", description: "Trip length in days, counting departure and return days. Or give start_date and end_date." },
       start_date: { type: "string", description: "YYYY-MM-DD, exactly as the caller said" },
       end_date: { type: "string", description: "YYYY-MM-DD" },
