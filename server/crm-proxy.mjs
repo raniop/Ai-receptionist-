@@ -480,6 +480,33 @@ function statusFor(name) {
   return hit ? s[hit] : "available"; // default available when unset/unknown
 }
 
+// ── Live presence from the staff's desk phones (Yealink "Action URL") ────────
+// Each phone calls /api/agents/presence on call start/end and DND on/off, so
+// Dalit knows someone is on a call before transferring. The phone can't send
+// headers, so the URL carries a key derived from MCP_AUTH_TOKEN. A "busy" that
+// is never cleared (a missed hang-up event) expires after 3 hours.
+const PRESENCE_FILE = new URL("./presence.json", import.meta.url);
+const PRESENCE_BUSY_MAX_MS = 3 * 60 * 60_000;
+const presenceKey = MCP_AUTH_TOKEN_FOR_PRESENCE();
+function MCP_AUTH_TOKEN_FOR_PRESENCE() {
+  const t = process.env.MCP_AUTH_TOKEN;
+  return t ? crypto.createHmac("sha256", t).update("presence").digest("hex").slice(0, 24) : null;
+}
+let presence = (() => { try { return JSON.parse(fs.readFileSync(PRESENCE_FILE, "utf8")); } catch { return {}; } })();
+function setPresence(email, state) {
+  presence[email] = { state, at: Date.now() };
+  try { fs.writeFileSync(PRESENCE_FILE, JSON.stringify(presence)); } catch { /* ignore */ }
+}
+/** "busy" (on a call), "away" (DND) or null when the phone hasn't reported. */
+function presenceFor(name) {
+  const email = agentEmail(name);
+  const p = email && presence[email];
+  if (!p) return null;
+  if (p.state === "busy") return Date.now() - p.at < PRESENCE_BUSY_MAX_MS ? "busy" : null;
+  if (p.state === "dnd") return "away";
+  return null;
+}
+
 function isActive(endDate) {
   const t = Date.parse(endDate);
   return Number.isNaN(t) ? null : t >= Date.now();
@@ -784,6 +811,8 @@ async function runMcpTool(name, a = {}) {
       const office = officeStatus();
       if (!office.office_open)
         return { ...office, status: "office_closed", instruction: "Do NOT transfer. Tell the caller the office is closed, take their details and send the staff member a message; say they will get back to the caller on the next business day." };
+      const live = presenceFor(a.agent_name);
+      if (live) return { ...office, status: live, ...(live === "busy" ? { note: "on another call right now" } : {}) };
       const r = await mcpInternal(`/api/agents/status?agent=${encodeURIComponent(a.agent_name ?? "")}`);
       return { ...office, status: r.status ?? "available" };
     }
@@ -1078,6 +1107,15 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Agent availability — read (Dalit's tool, and the admin panel) …
+    // Desk-phone presence: /api/agents/presence?agent=rani&state=busy|idle|dnd_on|dnd_off&key=…
+    if (url.pathname === "/api/agents/presence") {
+      if (!presenceKey || url.searchParams.get("key") !== presenceKey) return send(res, 401, { error: "unauthorized" });
+      const email = agentEmail(url.searchParams.get("agent"));
+      const state = { busy: "busy", idle: "idle", dnd_on: "dnd", dnd_off: "idle" }[url.searchParams.get("state")];
+      if (!email || !state) return send(res, 400, { error: "agent + state (busy|idle|dnd_on|dnd_off) required" });
+      setPresence(email, state);
+      return send(res, 200, { ok: true });
+    }
     if (req.method === "GET" && url.pathname === "/api/agents/status") {
       const agent = url.searchParams.get("agent");
       if (agent) return send(res, 200, { agent, status: statusFor(agent) });
