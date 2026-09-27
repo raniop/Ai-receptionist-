@@ -818,6 +818,9 @@ async function runMcpTool(name, a = {}) {
       return { ...office, status: r.status ?? "available" };
     }
     case "contact_agent": {
+      // A message nobody can call back is useless: require a real phone number.
+      if (String(a.caller_phone ?? "").replace(/\D/g, "").length < 9)
+        return { ok: false, emailed: false, error: "Missing or invalid phone number. Ask the caller for their phone number (or confirm the number they are calling from), then send again. Do not tell the caller the message was sent." };
       const r = await mcpInternal("/api/notify/agent", { method: "POST", body: { agent_name: a.agent_name, caller_name: a.caller_name, caller_phone: a.caller_phone, reason: a.reason } });
       if (r.emailed) return { ok: true, emailed: true };
       // Unknown name or a mail failure — never lose the message: send it to the office.
@@ -828,6 +831,9 @@ async function runMcpTool(name, a = {}) {
     }
     case "leave_message_for_office":
     case "save_lead": {
+      // A message nobody can call back is useless: require a real phone number.
+      if (String(a.phone ?? "").replace(/\D/g, "").length < 9)
+        return { ok: false, emailed: false, error: "Missing or invalid phone number. Ask the caller for their phone number (or confirm the number they are calling from), then send again. Do not tell the caller the message was sent." };
       const r = await mcpInternal("/api/notify/lead", { method: "POST", body: { full_name: a.full_name, phone: a.phone, topic: a.topic } });
       return r.emailed
         ? { ok: true, emailed: true }
