@@ -492,6 +492,7 @@ function MCP_AUTH_TOKEN_FOR_PRESENCE() {
   const t = process.env.MCP_AUTH_TOKEN;
   return t ? crypto.createHmac("sha256", t).update("presence").digest("hex").slice(0, 24) : null;
 }
+const presenceLog = [];
 let presence = (() => { try { return JSON.parse(fs.readFileSync(PRESENCE_FILE, "utf8")); } catch { return {}; } })();
 function setPresence(email, state) {
   presence[email] = { state, at: Date.now() };
@@ -1107,8 +1108,16 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Agent availability — read (Dalit's tool, and the admin panel) …
+    if (url.pathname === "/api/agents/presence-log") {
+      if (!presenceKey || url.searchParams.get("key") !== presenceKey) return send(res, 401, { error: "unauthorized" });
+      return send(res, 200, { hits: presenceLog, presence });
+    }
     // Desk-phone presence: /api/agents/presence?agent=rani&state=busy|idle|dnd_on|dnd_off&key=…
     if (url.pathname === "/api/agents/presence") {
+      // Keep the last few hits (no key) so a phone that "doesn't work" can be diagnosed.
+      presenceLog.unshift({ at: new Date().toISOString(), method: req.method, agent: url.searchParams.get("agent"), state: url.searchParams.get("state"), key_ok: url.searchParams.get("key") === presenceKey, ua: String(req.headers["user-agent"] ?? "").slice(0, 80) });
+      presenceLog.length = Math.min(presenceLog.length, 20);
+      console.log("[presence]", presenceLog[0]);
       if (!presenceKey || url.searchParams.get("key") !== presenceKey) return send(res, 401, { error: "unauthorized" });
       const email = agentEmail(url.searchParams.get("agent"));
       const state = { busy: "busy", idle: "idle", dnd_on: "dnd", dnd_off: "idle" }[url.searchParams.get("state")];
