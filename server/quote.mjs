@@ -401,6 +401,6 @@ function applyDiscount(res, d) {
     };
   }
   if (d.status === "phone_mismatch")
-    return { ...res, discount_note: "Could not confirm this ID with the number the caller is calling from. Give the regular price, say the office will check whether they have a customer discount, and do not say anything about existing policies." };
+    return { ...res, discount_note: "Could not confirm this ID with the number the caller is calling from. Give the regular price and do NOT mention any discount or existing policy. Only if the caller asks about a discount, say the office will check it." };
   return res;
 }
