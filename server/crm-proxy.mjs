@@ -372,6 +372,35 @@ async function crmFetch(path, init = {}, retry = true) {
   return res;
 }
 
+// ── Returning-customer discount for quotes ────────────────────────────────────
+// The discount is in the agentName of the customer's latest policy ("אופיר
+// מיוחד 20%" → 20% off the whole price). No SMS for this: instead the number
+// the caller is calling from must match the phone on file for that ID, so
+// reading out someone else's ID reveals nothing about their policies.
+async function customerDiscount(personId, callerPhone) {
+  if (!personId) return null;
+  let person = null, pid = null;
+  for (const id of idCandidates(personId)) {
+    const r = await crmFetch(`/api/Policy/GetByPersonId?personId=${encodeURIComponent(id)}`);
+    if (!r.ok) continue;
+    const rec = await r.json().catch(() => null);
+    const p = Array.isArray(rec) ? rec[0] : rec;
+    if (p?.personId) { person = p; pid = id; break; }
+  }
+  if (!person) return { status: "not_found" };
+  const last9 = (x) => String(x ?? "").replace(/\D/g, "").slice(-9);
+  const onFile = ["mobile", "phone"].map((k) => last9(person[k])).filter((x) => x.length === 9);
+  if (!callerPhone || !onFile.includes(last9(callerPhone))) return { status: "phone_mismatch" };
+  const r = await crmFetch(`/api/Policy/GetById?id=${encodeURIComponent(pid)}`);
+  const list = r.ok ? await r.json().catch(() => []) : [];
+  const latest = (Array.isArray(list) ? list : [list]).filter(Boolean)
+    .sort((a, b) => String(pick(b, ["issueDate"]) ?? "").localeCompare(String(pick(a, ["issueDate"]) ?? "")))[0];
+  const name = String(latest ? pick(latest, ["agentName"]) ?? "" : "");
+  const m = name.match(/אופיר מיוחד\s*(\d{1,2})/);
+  const pct = m ? Number(m[1]) : 0;
+  return pct > 0 && pct <= 50 ? { status: "discount", pct } : { status: "no_discount" };
+}
+
 // ── Israeli ID normalization ─────────────────────────────────────────────────
 // Callers (and the voice model) say IDs with extra or missing leading zeros, and
 // the CRM holds stray duplicates keyed by those variants — "0051208775" is an old
@@ -668,6 +697,8 @@ const MCP_TOOLS = [
       extensions: { type: "array", items: { type: "string" }, description: "Extensions for all travelers: baggage, cancellation_5000 (BASIC trip cancellation/curtailment, up to $5,000 — offer this one first), cancellation_10000 (EXTENDED, up to $10,000 — only if the caller asks to extend), extreme_sports, winter_sports, professional_sports, laptop, phone, rental_car, rental_car_6000, bicycle_2500, bicycle_4500, bicycle_6000, personal_accident. (pre_existing and pregnancy are added automatically from the health answers.)" },
       driver_age: { type: "number", description: "Age of the rental-car driver, if a rental car extension is chosen" },
       remove_search_rescue: { type: "boolean", description: "True only if the caller asks to drop search & rescue ($0.20/day)" },
+      person_id: { type: "string", description: "The caller's Israeli ID number, if they are an existing customer (to check their customer discount). No SMS needed." },
+      caller_phone: { type: "string", description: "The number the caller is calling from, exactly as you see it in your context (needed to confirm the discount). Omit if you cannot see it." },
     }, required: ["destination", "travelers"] } },
   { name: "travel_quote_answer", description: "Price quote STEP 2: send the caller's answer to the current Harel health question (answer health question, next question). Returns the next question to ask, or — after the last one — the final price. מעביר תשובה לשאלת הבריאות הנוכחית.",
     inputSchema: { type: "object", properties: {
@@ -804,7 +835,7 @@ async function runMcpTool(name, a = {}) {
       return { members: r.members ?? [] };
     }
     case "travel_price_quote":
-      return startQuote(a);
+      return startQuote(a, await customerDiscount(a.person_id, a.caller_phone).catch(() => null));
     case "travel_quote_answer":
       return answerQuote(a);
     case "check_agent_status": {

@@ -334,7 +334,7 @@ const ASK = (id, n) => {
   };
 };
 
-export function startQuote(q) {
+export function startQuote(q, discount = null) {
   for (const [k, v] of quotes) if (Date.now() - v.at >= QUOTE_TTL_MS) quotes.delete(k);
   const probe = calculateQuote({ ...q, travelers: (q.travelers ?? []).map((t) => ({ ...t, health: { q1: false, q2: false, q3: false, q4: false } })) });
   if (!probe.ok) return probe; // missing days / travelers
@@ -342,7 +342,7 @@ export function startQuote(q) {
   const queue = ["q1", "q2", "q3", "q4"];
   if (travelers.some((t) => Number(t.age) <= 41 && t.gender !== "male")) queue.push("pregnant");
   const id = crypto.randomUUID().slice(0, 8);
-  quotes.set(id, { q: { ...q, travelers }, answers: travelers.map(() => ({})), queue, at: Date.now() });
+  quotes.set(id, { q: { ...q, travelers }, answers: travelers.map(() => ({})), queue, discount, at: Date.now() });
   return {
     ok: true,
     quote_id: id,
@@ -385,5 +385,22 @@ export function answerQuote(a) {
   s.at = Date.now();
   if (s.queue.length) return { ok: true, quote_id: a.quote_id, ask_now: ASK(s.queue[0], s.answers.length) };
   quotes.delete(String(a.quote_id));
-  return calculateQuote({ ...s.q, travelers: s.q.travelers.map((t, i) => ({ ...t, health: s.answers[i] })) });
+  return applyDiscount(calculateQuote({ ...s.q, travelers: s.q.travelers.map((t, i) => ({ ...t, health: s.answers[i] })) }), s.discount);
+}
+
+/** Customer discount from the latest policy — on the whole price. */
+function applyDiscount(res, d) {
+  if (!res?.ok || res.do_not_give_price || !d) return res;
+  if (d.status === "discount") {
+    return {
+      ...res,
+      total_before_discount: res.total,
+      discount_pct: d.pct,
+      total: r2(res.total * (1 - d.pct / 100)),
+      discount_note: `The caller's last policy had a ${d.pct}% customer discount. Say so, and give the price after the discount (total) - you may also mention the price before it.`,
+    };
+  }
+  if (d.status === "phone_mismatch")
+    return { ...res, discount_note: "Could not confirm this ID with the number the caller is calling from. Give the regular price, say the office will check whether they have a customer discount, and do not say anything about existing policies." };
+  return res;
 }
