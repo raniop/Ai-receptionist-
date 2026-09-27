@@ -199,7 +199,7 @@ export function calculateQuote(q) {
   const trip_summary =
     `נסיעה ל${dest === "usa" ? "ארצות הברית" : q.destination}` +
     (q.start_date && q.end_date ? `, מ-${heDate(q.start_date)} עד ${heDate(q.end_date)}` : "") +
-    `, ${days} ימים, ${travelers.length === 1 ? `נוסע אחד בגיל ${ages}` : `${travelers.length} נוסעים בגילאי ${ages}`}`;
+    `, ${days} ימים, ${travelers.length === 1 ? (travelers[0].gender === "female" ? `נוסעת אחת בת ${ages}` : `נוסע אחד בן ${ages}`) : `${travelers.length} נוסעים בגילאי ${ages}`}`;
 
   // Never price without the full health declaration: the voice model tends to
   // ask question 1 and assume "no" for the rest. Every traveler needs an
@@ -327,6 +327,7 @@ const ASK = (id, n) => {
   return {
     question_id: id,
     text: x.text,
+    wording: "Keep the wording, but match the grammatical gender to the caller: the text is written in masculine; for a woman say it in feminine (at mekabelt, avart, hufnet, ushpazt), for several travelers use plural.",
     ...(x.note ? { note_if_asked: x.note } : {}),
     ...(id === "pregnant" ? { also_collect: "if yes: the pregnancy week, and whether it is high-risk / multiple / the doctor advised not to travel" } : {}),
     ...(n > 1 ? { ask_as: "one question for all travelers together, then note who answered yes" } : {}),
