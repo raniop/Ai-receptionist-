@@ -557,6 +557,8 @@ function recentTransfer(callerPhone, agentName) {
   const email = agentEmail(agentName) ?? String(agentName ?? "").trim().toLowerCase();
   const now = Date.now();
   const past = (transferAttempts.get(phone) ?? []).filter((t) => now - t.at < 10 * 60_000);
+  // The model often fires the same check twice in a row: that is one attempt, not a loop.
+  if (past.some((t) => t.email === email && now - t.at < 10_000)) return false;
   // Any transfer in the last 2 minutes, or to the same person in the last 10.
   const looped = past.some((t) => now - t.at < 2 * 60_000 || t.email === email);
   if (!looped) past.push({ email, at: now });
@@ -923,7 +925,7 @@ async function runMcpTool(name, a = {}) {
       // Only the last 4 digits, to confirm Dalit passes the caller ID (the loop guard needs it).
       console.log("[transfer-check]", a.agent_name, "caller", a.caller_phone ? `…${String(a.caller_phone).replace(/\D/g, "").slice(-4)}` : "MISSING", looped ? "LOOP-BLOCKED" : status);
       if (looped)
-        return { ...office, status: "not_answering", instruction: "This caller was just transferred and nobody answered, so the call came back to you. Do NOT transfer again. Apologize, say the person cannot pick up right now, and take a message (name, reason, phone) for them." };
+        return { ...office, status: "not_answering", instruction: "This caller was just transferred and nobody answered, so the call came back to you. Do NOT transfer again, and do NOT check or try any other staff member in this call. Apologize once, say nobody can pick up right now, and take a message (name, reason, phone) for the person they asked for." };
       return { ...office, status };
     }
     case "contact_agent": {
