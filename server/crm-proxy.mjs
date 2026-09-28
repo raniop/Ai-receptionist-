@@ -548,18 +548,28 @@ function presenceFor(name) {
 // One extensions list gives every desk phone's state (st_state) and PBX-side DND.
 // Cached for a few seconds so back-to-back checks don't hammer the PBX.
 const PBX_BUSY = new Set(["INUSE", "BUSY", "RINGINUSE", "ONHOLD"]);
-let pbxCache = { at: 0, byExt: null };
+let pbxCache = { at: 0, byExt: null, failedAt: 0 };
 async function pbxExtensions() {
   const { BSMART_API_URL, BSMART_API_KEY } = process.env;
   if (!BSMART_API_URL || !BSMART_API_KEY) return null;
   if (pbxCache.byExt && Date.now() - pbxCache.at < 3000) return pbxCache.byExt;
+  // After a failure (e.g. the PBX firewall drops us) don't make Dalit wait on every check.
+  if (Date.now() - pbxCache.failedAt < 60_000) return null;
+  try {
+    return await pbxFetchExtensions(BSMART_API_URL, BSMART_API_KEY);
+  } catch (err) {
+    pbxCache.failedAt = Date.now();
+    throw err;
+  }
+}
+async function pbxFetchExtensions(BSMART_API_URL, BSMART_API_KEY) {
   const u = new URL(BSMART_API_URL);
   for (const [k, v] of Object.entries({ key: BSMART_API_KEY, tenant: process.env.BSMART_TENANT || "1303", format: "json", reqtype: "INFO", info: "extensions" }))
     u.searchParams.set(k, v);
-  const r = await fetch(u, { signal: AbortSignal.timeout(3000) });
+  const r = await fetch(u, { signal: AbortSignal.timeout(1500) });
   const list = await r.json();
-  if (!Array.isArray(list)) return null;
-  pbxCache = { at: Date.now(), byExt: Object.fromEntries(list.map((e) => [String(e.ex_number), e])) };
+  if (!Array.isArray(list)) throw new Error("unexpected PBX reply");
+  pbxCache = { at: Date.now(), failedAt: 0, byExt: Object.fromEntries(list.map((e) => [String(e.ex_number), e])) };
   return pbxCache.byExt;
 }
 /** "busy" | "away" | "available" from the PBX, or null when unknown (no extension / API down). */
