@@ -304,12 +304,13 @@ function agentEmailHtml({ agentName, callerName, callerPhone, reason }) {
 // Team email directory (server-side allowlist, so the browser can't email arbitrary
 // addresses). Names match src/content/site.ts. The voice agent may pass Hebrew or
 // the English labels of its transfer destinations ("Rani Ophir - operations").
+// ext = the desk phone's extension on the office PBX (for live busy/DND state).
 const STAFF = [
-  { email: "eli@ophirins.co.il", aliases: ["אלי", "eli"] },
-  { email: "hadar@ophirins.co.il", aliases: ["הדר", "hadar"] },
-  { email: "rani@ophirins.co.il", aliases: ["רני", "rani"] },
+  { email: "eli@ophirins.co.il", ext: "207", aliases: ["אלי", "eli"] },
+  { email: "hadar@ophirins.co.il", ext: "204", aliases: ["הדר", "hadar"] },
+  { email: "rani@ophirins.co.il", ext: "205", aliases: ["רני", "rani"] },
   { email: "gilad@ophirins.co.il", aliases: ["גלעד", "כרמונה", "gilad", "carmona"] },
-  { email: "ophir@ophirins.co.il", aliases: ["שיראל", "shirel", "secretary", "מזכיר"] },
+  { email: "ophir@ophirins.co.il", ext: "200", aliases: ["שיראל", "shirel", "secretary", "מזכיר"] },
 ];
 function agentEmail(name) {
   const q = String(name || "").trim().toLowerCase();
@@ -535,6 +536,38 @@ function presenceFor(name) {
   if (p.state === "busy") return Date.now() - p.at < PRESENCE_BUSY_MAX_MS ? "busy" : null;
   if (p.state === "dnd") return "away";
   return null;
+}
+
+// ── Live state straight from the office PBX (b-smart / MiRTA read-only API) ──
+// One extensions list gives every desk phone's state (st_state) and PBX-side DND.
+// Cached for a few seconds so back-to-back checks don't hammer the PBX.
+const PBX_BUSY = new Set(["INUSE", "BUSY", "RINGINUSE", "ONHOLD"]);
+let pbxCache = { at: 0, byExt: null };
+async function pbxExtensions() {
+  const { BSMART_API_URL, BSMART_API_KEY } = process.env;
+  if (!BSMART_API_URL || !BSMART_API_KEY) return null;
+  if (pbxCache.byExt && Date.now() - pbxCache.at < 3000) return pbxCache.byExt;
+  const u = new URL(BSMART_API_URL);
+  for (const [k, v] of Object.entries({ key: BSMART_API_KEY, tenant: process.env.BSMART_TENANT || "1303", format: "json", reqtype: "INFO", info: "extensions" }))
+    u.searchParams.set(k, v);
+  const r = await fetch(u, { signal: AbortSignal.timeout(3000) });
+  const list = await r.json();
+  if (!Array.isArray(list)) return null;
+  pbxCache = { at: Date.now(), byExt: Object.fromEntries(list.map((e) => [String(e.ex_number), e])) };
+  return pbxCache.byExt;
+}
+/** "busy" | "away" | "available" from the PBX, or null when unknown (no extension / API down). */
+async function pbxPresenceFor(name) {
+  const email = agentEmail(name);
+  const ext = STAFF.find((s) => s.email === email)?.ext;
+  if (!ext) return null;
+  const e = (await pbxExtensions().catch((err) => (console.warn("[pbx]", err.message), null)))?.[ext];
+  if (!e) return null;
+  if (e.ex_dnd && e.ex_dnd !== "no") return "away";
+  const st = String(e.st_state ?? "").toUpperCase();
+  if (PBX_BUSY.has(st)) return "busy";
+  if (st === "UNAVAILABLE" || st === "INVALID") return "away"; // phone offline
+  return "available";
 }
 
 function isActive(endDate) {
@@ -843,7 +876,10 @@ async function runMcpTool(name, a = {}) {
       const office = officeStatus();
       if (!office.office_open)
         return { ...office, status: "office_closed", instruction: "Do NOT transfer. Tell the caller the office is closed, take their details and send the staff member a message; say they will get back to the caller on the next business day." };
-      const live = presenceFor(a.agent_name);
+      // The PBX knows who is on a call; the desk-phone relay still adds phone-side DND.
+      const pbx = await pbxPresenceFor(a.agent_name);
+      const phone = presenceFor(a.agent_name);
+      const live = pbx === "busy" || pbx === "away" ? pbx : phone === "away" ? "away" : pbx ? null : phone;
       if (live) return { ...office, status: live, ...(live === "busy" ? { note: "on another call right now" } : {}) };
       const r = await mcpInternal(`/api/agents/status?agent=${encodeURIComponent(a.agent_name ?? "")}`);
       return { ...office, status: r.status ?? "available" };
