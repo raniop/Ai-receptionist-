@@ -544,6 +544,26 @@ function presenceFor(name) {
   return null;
 }
 
+// ── Transfer loop guard ──────────────────────────────────────────────────────
+// An unanswered transfer rings for 20s and the PBX hands the caller back to a NEW
+// Dalit session, which would happily transfer again (a customer heard "checking if
+// Rani is available" three times). Each "available" answer counts as a transfer
+// attempt; the same caller coming back soon gets a message-taking answer instead.
+const transferAttempts = new Map(); // last 8 digits of the caller's phone → [{ email, at }]
+function recentTransfer(callerPhone, agentName) {
+  // 8 digits match both 03-7130143 and +972-3-7130143 (a landline has one fewer digit).
+  const phone = String(callerPhone ?? "").replace(/\D/g, "").slice(-8);
+  if (phone.length < 8) return false;
+  const email = agentEmail(agentName) ?? String(agentName ?? "").trim().toLowerCase();
+  const now = Date.now();
+  const past = (transferAttempts.get(phone) ?? []).filter((t) => now - t.at < 10 * 60_000);
+  // Any transfer in the last 2 minutes, or to the same person in the last 10.
+  const looped = past.some((t) => now - t.at < 2 * 60_000 || t.email === email);
+  if (!looped) past.push({ email, at: now });
+  transferAttempts.set(phone, past);
+  return looped;
+}
+
 // ── Live state straight from the office PBX (b-smart / MiRTA read-only API) ──
 // One extensions list gives every desk phone's state (st_state) and PBX-side DND.
 // Cached for a few seconds so back-to-back checks don't hammer the PBX.
@@ -758,7 +778,7 @@ const MCP_TOOLS = [
       high_risk_pregnancy: { type: "boolean", description: "Only for the pregnancy question when the answer is yes" },
     }, required: ["quote_id", "question_id", "answers"] } },
   { name: "check_agent_status", description: "BEFORE ANY TRANSFER: check whether the office is open now (business hours, Friday/Saturday, Jewish holidays) and whether a staff member / employee is available to take a call. Returns office_open, office_status, next_business_day and the staff status (available / busy / away / office_closed). Transfer only when office_open is true and status is available. בודק אם המשרד פתוח ואם העובד זמין.",
-    inputSchema: { type: "object", properties: { agent_name: { type: "string" } }, required: ["agent_name"] } },
+    inputSchema: { type: "object", properties: { agent_name: { type: "string" }, caller_phone: { type: "string", description: "The caller's phone number (caller ID), so a transfer that was not answered is not retried in a loop." } }, required: ["agent_name"] } },
   { name: "contact_agent", description: "Send a callback request / message by email to a specific staff member when they are unavailable, with the caller's name, phone and reason. שולח לעובד בקשת חזרה.",
     inputSchema: { type: "object", properties: { agent_name: { type: "string" }, caller_name: { type: "string" }, caller_phone: { type: "string" }, reason: { type: "string" } }, required: ["agent_name", "caller_name", "caller_phone"] } },
 ];
@@ -898,7 +918,10 @@ async function runMcpTool(name, a = {}) {
       const live = pbx === "busy" || pbx === "away" ? pbx : phone === "away" ? "away" : pbx ? null : phone;
       if (live) return { ...office, status: live, ...(live === "busy" ? { note: "on another call right now" } : {}) };
       const r = await mcpInternal(`/api/agents/status?agent=${encodeURIComponent(a.agent_name ?? "")}`);
-      return { ...office, status: r.status ?? "available" };
+      const status = r.status ?? "available";
+      if (status === "available" && recentTransfer(a.caller_phone, a.agent_name))
+        return { ...office, status: "not_answering", instruction: "This caller was just transferred and nobody answered, so the call came back to you. Do NOT transfer again. Apologize, say the person cannot pick up right now, and take a message (name, reason, phone) for them." };
+      return { ...office, status };
     }
     case "contact_agent": {
       // A message nobody can call back is useless: require a real phone number.
