@@ -919,7 +919,10 @@ async function runMcpTool(name, a = {}) {
       if (live) return { ...office, status: live, ...(live === "busy" ? { note: "on another call right now" } : {}) };
       const r = await mcpInternal(`/api/agents/status?agent=${encodeURIComponent(a.agent_name ?? "")}`);
       const status = r.status ?? "available";
-      if (status === "available" && recentTransfer(a.caller_phone, a.agent_name))
+      const looped = status === "available" && recentTransfer(a.caller_phone, a.agent_name);
+      // Only the last 4 digits, to confirm Dalit passes the caller ID (the loop guard needs it).
+      console.log("[transfer-check]", a.agent_name, "caller", a.caller_phone ? `…${String(a.caller_phone).replace(/\D/g, "").slice(-4)}` : "MISSING", looped ? "LOOP-BLOCKED" : status);
+      if (looped)
         return { ...office, status: "not_answering", instruction: "This caller was just transferred and nobody answered, so the call came back to you. Do NOT transfer again. Apologize, say the person cannot pick up right now, and take a message (name, reason, phone) for them." };
       return { ...office, status };
     }
