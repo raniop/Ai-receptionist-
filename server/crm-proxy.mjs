@@ -311,6 +311,12 @@ const STAFF = [
   { email: "rani@ophirins.co.il", ext: "205", aliases: ["רני", "rani"] },
   { email: "gilad@ophirins.co.il", aliases: ["גלעד", "כרמונה", "gilad", "carmona"] },
   { email: "ophir@ophirins.co.il", ext: "200", aliases: ["שיראל", "shirel", "secretary", "מזכיר"] },
+  // Two Orits: only the full name matches, so a bare "Orit" falls back to the office.
+  { email: "orit_o@ophirins.co.il", ext: "201", aliases: ["אורית אופיר", "orit ophir", "orit ofir"] },
+  { email: "orit_c@ophirins.co.il", ext: "209", aliases: ["אורית כהן", "orit cohen"] },
+  { email: "rona@ophirins.co.il", ext: "208", aliases: ["רונה", "rona"] },
+  { email: "sigal@ophirins.co.il", ext: "206", aliases: ["סיגל", "sigal"] },
+  { email: "maytal@ophirins.co.il", ext: "210", aliases: ["מיטל", "מייטל", "maytal", "meital"] },
 ];
 function agentEmail(name) {
   const q = String(name || "").trim().toLowerCase();
