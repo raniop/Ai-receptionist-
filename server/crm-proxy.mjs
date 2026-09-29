@@ -601,24 +601,41 @@ function presenceFor(name) {
 
 // ── Transfer loop guard ──────────────────────────────────────────────────────
 // An unanswered transfer rings for 20s and the PBX hands the caller back to a NEW
-// Dalit session, which would happily transfer again (a customer heard "checking if
-// Rani is available" three times). Each "available" answer counts as a transfer
-// attempt; the same caller coming back soon gets a message-taking answer instead.
+// Dalit session, which would try to transfer again (a customer heard "checking if
+// Rani is available" three times). We remember who each caller was transferred to,
+// so we never send them back to the SAME person, and we cap the whole team chase.
 const transferAttempts = new Map(); // last 8 digits of the caller's phone → [{ email, at }]
-function recentTransfer(callerPhone, agentName) {
+const TRANSFER_WINDOW_MS = 10 * 60_000;
+function callerKey(callerPhone) {
   // 8 digits match both 03-7130143 and +972-3-7130143 (a landline has one fewer digit).
-  const phone = String(callerPhone ?? "").replace(/\D/g, "").slice(-8);
-  if (phone.length < 8) return false;
-  const email = agentEmail(agentName) ?? String(agentName ?? "").trim().toLowerCase();
+  const p = String(callerPhone ?? "").replace(/\D/g, "").slice(-8);
+  return p.length >= 8 ? p : null;
+}
+function recentAttempts(callerPhone) {
+  const k = callerKey(callerPhone);
+  if (!k) return [];
   const now = Date.now();
-  const past = (transferAttempts.get(phone) ?? []).filter((t) => now - t.at < 10 * 60_000);
-  // The model often fires the same check twice in a row: that is one attempt, not a loop.
-  if (past.some((t) => t.email === email && now - t.at < 10_000)) return false;
-  // Any transfer in the last 2 minutes, or to the same person in the last 10.
-  const looped = past.some((t) => now - t.at < 2 * 60_000 || t.email === email);
-  if (!looped) past.push({ email, at: now });
-  transferAttempts.set(phone, past);
-  return looped;
+  const past = (transferAttempts.get(k) ?? []).filter((t) => now - t.at < TRANSFER_WINDOW_MS);
+  transferAttempts.set(k, past);
+  return past;
+}
+function agentKey(name) {
+  return agentEmail(name) ?? String(name ?? "").trim().toLowerCase();
+}
+/** This caller was already transferred to this person in the last few minutes. */
+function triedRecently(callerPhone, name) {
+  return recentAttempts(callerPhone).some((t) => t.email === agentKey(name));
+}
+/** How many DISTINCT people this caller was transferred to lately (cap the chase). */
+function distinctTries(callerPhone) {
+  return new Set(recentAttempts(callerPhone).map((t) => t.email)).size;
+}
+function recordTransfer(callerPhone, name) {
+  const k = callerKey(callerPhone);
+  if (!k) return;
+  const past = recentAttempts(callerPhone);
+  past.push({ email: agentKey(name), at: Date.now() });
+  transferAttempts.set(k, past);
 }
 
 // ── Live state straight from the office PBX (b-smart / MiRTA read-only API) ──
@@ -661,6 +678,52 @@ async function pbxPresenceFor(name) {
   if (PBX_BUSY.has(st)) return "busy";
   if (st === "UNAVAILABLE" || st === "INVALID") return "away"; // phone offline
   return "available";
+}
+
+// One person's live status, assuming the office is open: "available" | "busy" | "away".
+// The PBX (on a call) wins; the desk-phone relay adds phone-side DND; then the manual toggle.
+async function liveStatusOf(name) {
+  const pbx = await pbxPresenceFor(name);
+  const phone = presenceFor(name);
+  const live = pbx === "busy" || pbx === "away" ? pbx : phone === "away" ? "away" : pbx ? null : phone;
+  if (live) return live;
+  const r = await mcpInternal(`/api/agents/status?agent=${encodeURIComponent(name ?? "")}`);
+  return r.status ?? "available";
+}
+
+// Travel-desk escalation (Rani's rule): if the person a travel caller asked for is not
+// free, try Shirel, then Eli, then Hadar, and connect the caller to the first one free.
+const TRAVEL_STAFF = new Set(["rani@ophirins.co.il", "hadar@ophirins.co.il", "gilad@ophirins.co.il"]);
+const TRAVEL_FALLBACK = ["שיראל", "אלי אופיר", "הדר גלעד"];
+// The English name each transfer destination is labelled with in the xAI console, so
+// transfer_to matches a real transfer_call destination.
+const AGENT_LABEL = {
+  "rani@ophirins.co.il": "Rani Ophir", "eli@ophirins.co.il": "Eli Ophir",
+  "hadar@ophirins.co.il": "Hadar Gilad", "gilad@ophirins.co.il": "Gilad Carmona",
+  "ophir@ophirins.co.il": "Shirel", "orit_o@ophirins.co.il": "Orit Ophir",
+  "orit_c@ophirins.co.il": "Orit Cohen", "rona@ophirins.co.il": "Rona",
+  "sigal@ophirins.co.il": "Sigal", "maytal@ophirins.co.il": "Maytal",
+};
+function canonicalName(name) {
+  return AGENT_LABEL[agentEmail(name)] ?? String(name || "").trim();
+}
+function isTravelRequest(name) {
+  return /travel|נסיע/i.test(String(name || "")) || TRAVEL_STAFF.has(agentEmail(name));
+}
+// The person to actually connect this caller to now, or null to take a message.
+// Skips anyone this caller was just bounced from, and caps the whole-team chase.
+async function pickTransferTarget(primaryName, callerPhone) {
+  const primaryStatus = await liveStatusOf(primaryName);
+  const capReached = distinctTries(callerPhone) >= 3;
+  const usable = async (name) => !triedRecently(callerPhone, name) && (await liveStatusOf(name)) === "available";
+  if (!capReached && (await usable(primaryName))) return { target: canonicalName(primaryName), primaryStatus };
+  if (!capReached && isTravelRequest(primaryName)) {
+    for (const cand of TRAVEL_FALLBACK) {
+      if (agentKey(cand) === agentKey(primaryName)) continue;
+      if (await usable(cand)) return { target: canonicalName(cand), primaryStatus, escalated: true };
+    }
+  }
+  return { target: null, primaryStatus };
 }
 
 function isActive(endDate) {
@@ -968,20 +1031,29 @@ async function runMcpTool(name, a = {}) {
       // The office clock is decided here; the model got open/closed wrong.
       const office = officeStatus();
       if (!office.office_open)
-        return { ...office, status: "office_closed", instruction: "Do NOT transfer. Tell the caller the office is closed, take their details and send the staff member a message; say they will get back to the caller on the next business day." };
-      // The PBX knows who is on a call; the desk-phone relay still adds phone-side DND.
-      const pbx = await pbxPresenceFor(a.agent_name);
-      const phone = presenceFor(a.agent_name);
-      const live = pbx === "busy" || pbx === "away" ? pbx : phone === "away" ? "away" : pbx ? null : phone;
-      if (live) return { ...office, status: live, ...(live === "busy" ? { note: "on another call right now" } : {}) };
-      const r = await mcpInternal(`/api/agents/status?agent=${encodeURIComponent(a.agent_name ?? "")}`);
-      const status = r.status ?? "available";
-      const looped = status === "available" && recentTransfer(a.caller_phone, a.agent_name);
-      // Only the last 4 digits, to confirm Dalit passes the caller ID (the loop guard needs it).
-      console.log("[transfer-check]", a.agent_name, "caller", a.caller_phone ? `…${String(a.caller_phone).replace(/\D/g, "").slice(-4)}` : "MISSING", looped ? "LOOP-BLOCKED" : status);
-      if (looped)
-        return { ...office, status: "not_answering", instruction: "This caller was just transferred and nobody answered, so the call came back to you. Do NOT transfer again, and do NOT check or try any other staff member in this call. Apologize once, say nobody can pick up right now, and take a message (name, reason, phone) for the person they asked for." };
-      return { ...office, status };
+        return { ...office, status: "office_closed", transfer_to: null, instruction: "Do NOT transfer. Tell the caller the office is closed, take their details and send the staff member a message; say they will get back to the caller on the next business day." };
+      // The server decides the whole thing in one call: who to connect to now (the
+      // person asked for, or - for a travel request - the first free fallback), or a
+      // message if nobody is free. This is ONE availability check for the caller.
+      const { target, primaryStatus, escalated } = await pickTransferTarget(a.agent_name, a.caller_phone);
+      console.log("[transfer-check]", a.agent_name, "caller", a.caller_phone ? `…${String(a.caller_phone).replace(/\D/g, "").slice(-4)}` : "MISSING", "->", target || "MESSAGE");
+      if (target) {
+        recordTransfer(a.caller_phone, target);
+        return {
+          ...office,
+          status: "available",
+          transfer_to: target,
+          instruction: escalated
+            ? `${a.agent_name} is not available right now. Tell the caller you are connecting them to ${target} instead, and transfer to ${target}.`
+            : `Available - tell the caller you are connecting them and transfer to ${target}.`,
+        };
+      }
+      return {
+        ...office,
+        status: primaryStatus === "available" ? "not_answering" : primaryStatus,
+        transfer_to: null,
+        instruction: "Nobody is free to take the call right now. Do NOT transfer. Apologize once, and take a message (name, what it is about, confirm the callback number) for the person the caller asked for.",
+      };
     }
     case "contact_agent": {
       // A message nobody can call back is useless: require a real phone number.
