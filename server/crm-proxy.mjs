@@ -266,11 +266,6 @@ function callHref(phone, recipientName) {
   const clid = who?.did || "0732721110";
   return `${CALL_RELAY_BASE}/call?ext=${encodeURIComponent(ext)}&clid=${encodeURIComponent(clid)}&to=${encodeURIComponent(digits)}&token=${token}`;
 }
-// Small green "call" pill shown inline, right next to the phone number.
-function callPillHtml(href) {
-  if (!href) return "";
-  return `&nbsp;<a href="${esc(href)}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;font-size:12px;font-weight:700;line-height:1;padding:6px 11px;border-radius:999px;vertical-align:middle;">📞 חייג</a>`;
-}
 // Big primary call button under the details.
 function callButtonHtml(href) {
   if (!href) return "";
@@ -300,9 +295,11 @@ function agentEmailHtml({ agentName, callerName, callerPhone, reason }) {
   // Click-to-call: opens the office-PC listener, which tells the PBX to ring the
   // recipient's desk phone and connect it to this number. The token (derived from
   // MCP_AUTH_TOKEN) stops any random web page on that PC from placing calls.
+  // The number itself is the dialer: clicking it rings the desk phone and connects
+  // to the caller. If click-to-call is off, fall back to a plain tel: link.
   const href = callHref(callerPhone, agentName);
   const phoneCell = phone
-    ? `<span style="direction:ltr;unicode-bidi:embed;display:inline-block;"><a href="tel:${esc(telHref)}" style="color:#1d4ed8;text-decoration:none;">${esc(phone)}</a></span>${callPillHtml(href)}`
+    ? `<a href="${esc(href || `tel:${telHref}`)}" style="color:#1d4ed8;text-decoration:none;font-weight:700;direction:ltr;unicode-bidi:embed;display:inline-block;">${esc(phone)}</a>`
     : "—";
   const callBtn = callButtonHtml(href);
   return `<!DOCTYPE html>
@@ -637,6 +634,18 @@ function recordTransfer(callerPhone, name) {
   past.push({ email: agentKey(name), at: Date.now() });
   transferAttempts.set(k, past);
 }
+// Distinct people this caller was already connected to (and came back from), newest
+// last, as { email, he, label } - so we can email all of them and name them.
+function triedList(callerPhone) {
+  const seen = new Set();
+  const out = [];
+  for (const t of recentAttempts(callerPhone)) {
+    if (seen.has(t.email)) continue;
+    seen.add(t.email);
+    out.push({ email: t.email, he: AGENT_HE[t.email] || t.email, label: AGENT_LABEL[t.email] || t.email });
+  }
+  return out;
+}
 
 // ── Live state straight from the office PBX (b-smart / MiRTA read-only API) ──
 // One extensions list gives every desk phone's state (st_state) and PBX-side DND.
@@ -710,7 +719,7 @@ function canonicalName(name) {
 // Hebrew first name, so Dalit says "שיראל" (not the English "Shirel" -> "שירל").
 const AGENT_HE = {
   "rani@ophirins.co.il": "רני", "eli@ophirins.co.il": "אלי", "hadar@ophirins.co.il": "הדר",
-  "gilad@ophirins.co.il": "גלעד", "ophir@ophirins.co.il": "שיראל", "orit_o@ophirins.co.il": "אורית אופיר",
+  "gilad@ophirins.co.il": "גלעד", "ophir@ophirins.co.il": "שירֶל", "orit_o@ophirins.co.il": "אורית אופיר",
   "orit_c@ophirins.co.il": "אורית כהן", "rona@ophirins.co.il": "רונה", "sigal@ophirins.co.il": "סיגל",
   "maytal@ophirins.co.il": "מיטל",
 };
@@ -724,7 +733,9 @@ const decisionCache = new Map(); // callerKey -> { decision, at }
 function cachedDecision(callerPhone) {
   const k = callerKey(callerPhone);
   const c = k && decisionCache.get(k);
-  return c && Date.now() - c.at < 45_000 ? c.decision : null;
+  // Short: covers a rapid duplicate check (a few seconds apart), but NOT a bounced
+  // call coming back after the ~20s ring, which must be recomputed (skip who failed).
+  return c && Date.now() - c.at < 12_000 ? c.decision : null;
 }
 function cacheDecision(callerPhone, decision) {
   const k = callerKey(callerPhone);
@@ -737,7 +748,9 @@ function isTravelRequest(name) {
 // Skips anyone this caller was just bounced from, and caps the whole-team chase.
 async function pickTransferTarget(primaryName, callerPhone) {
   const primaryStatus = await liveStatusOf(primaryName);
-  const capReached = distinctTries(callerPhone) >= 3;
+  // After two people were already connected and the caller still came back, stop
+  // bouncing them around: take a message for everyone tried instead.
+  const capReached = distinctTries(callerPhone) >= 2;
   const usable = async (name) => !triedRecently(callerPhone, name) && (await liveStatusOf(name)) === "available";
   if (!capReached && (await usable(primaryName))) return { target: canonicalName(primaryName), primaryStatus };
   if (!capReached && isTravelRequest(primaryName)) {
@@ -1055,12 +1068,28 @@ async function runMcpTool(name, a = {}) {
       const office = officeStatus();
       if (!office.office_open)
         return { ...office, status: "office_closed", transfer_to: null, instruction: "Do NOT transfer. Tell the caller the office is closed, take their details and send the staff member a message; say they will get back to the caller on the next business day." };
-      // The server decides the whole thing in one call: who to connect to now (the
-      // person asked for, or - for a travel request - the first free fallback), or a
-      // message if nobody is free. The model often fires this check twice, so the
-      // decision is cached per caller and the duplicate gets the SAME answer.
-      let decision = cachedDecision(a.caller_phone);
-      if (!decision) {
+      // The server decides in one call: connect the caller to whoever is free (the
+      // person asked for, or a travel fallback), or take a message. The model fires
+      // this check twice, so the decision is cached briefly and a duplicate gets the
+      // SAME answer. A caller who was already transferred and CAME BACK (tried, and no
+      // fresh cache) is not sent around again: take a message for everyone tried.
+      const cached = cachedDecision(a.caller_phone);
+      const tried = triedList(a.caller_phone);
+      let decision;
+      if (cached) {
+        decision = cached;
+      } else if (tried.length) {
+        const names = tried.map((t) => t.he);
+        const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0];
+        console.log("[transfer-check]", a.agent_name, "->", "NO-ANSWER, message to", names.join("+"));
+        return {
+          ...office,
+          status: "no_answer",
+          transfer_to: null,
+          tried_names: names,
+          instruction: `This caller was already connected to ${list} and nobody answered. Do NOT transfer again. Tell the caller, in Hebrew, that ${list} could not answer, so you will ask one of them to call back - take a message (name, what it is about, confirm the callback number) and it will be sent to all of them.`,
+        };
+      } else {
         decision = await pickTransferTarget(a.agent_name, a.caller_phone);
         if (decision.target) recordTransfer(a.caller_phone, decision.target);
         cacheDecision(a.caller_phone, decision);
@@ -1079,6 +1108,7 @@ async function runMcpTool(name, a = {}) {
             : `Available - tell the caller in Hebrew you are connecting them to ${say}, then transfer_call to the "${target}" destination.`,
         };
       }
+      // Nobody free and nobody tried yet: take a message for the person asked for.
       return {
         ...office,
         status: primaryStatus === "available" ? "not_answering" : primaryStatus,
@@ -1090,8 +1120,18 @@ async function runMcpTool(name, a = {}) {
       // A message nobody can call back is useless: require a real phone number.
       if (String(a.caller_phone ?? "").replace(/\D/g, "").length < 9)
         return { ok: false, emailed: false, error: "Missing or invalid phone number. Ask the caller for their phone number (or confirm the number they are calling from), then send again. Do not tell the caller the message was sent." };
-      const r = await mcpInternal("/api/notify/agent", { method: "POST", body: { agent_name: a.agent_name, caller_name: a.caller_name, caller_phone: a.caller_phone, reason: a.reason } });
-      if (r.emailed) return { ok: true, emailed: true };
+      // Send to the person asked for AND anyone this caller was bounced from, so after
+      // Rani and Shirel both missed the call, both of them get the callback request.
+      const recipients = new Map(); // email -> display name
+      const addRecipient = (nm) => { const e = agentEmail(nm); if (e && !recipients.has(e)) recipients.set(e, nm); };
+      addRecipient(a.agent_name);
+      for (const t of triedList(a.caller_phone)) addRecipient(t.he);
+      let emailed = false;
+      for (const nm of recipients.values()) {
+        const r = await mcpInternal("/api/notify/agent", { method: "POST", body: { agent_name: nm, caller_name: a.caller_name, caller_phone: a.caller_phone, reason: a.reason } });
+        emailed = emailed || r.emailed;
+      }
+      if (emailed) return { ok: true, emailed: true, sent_to: [...recipients.values()] };
       // Unknown name or a mail failure — never lose the message: send it to the office.
       const l = await mcpInternal("/api/notify/lead", { method: "POST", body: { full_name: a.caller_name, phone: a.caller_phone, topic: `הודעה עבור ${a.agent_name}: ${a.reason || "בקשת חזרה"}` } });
       return l.emailed
