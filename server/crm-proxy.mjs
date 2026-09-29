@@ -707,6 +707,29 @@ const AGENT_LABEL = {
 function canonicalName(name) {
   return AGENT_LABEL[agentEmail(name)] ?? String(name || "").trim();
 }
+// Hebrew first name, so Dalit says "שיראל" (not the English "Shirel" -> "שירל").
+const AGENT_HE = {
+  "rani@ophirins.co.il": "רני", "eli@ophirins.co.il": "אלי", "hadar@ophirins.co.il": "הדר",
+  "gilad@ophirins.co.il": "גלעד", "ophir@ophirins.co.il": "שיראל", "orit_o@ophirins.co.il": "אורית אופיר",
+  "orit_c@ophirins.co.il": "אורית כהן", "rona@ophirins.co.il": "רונה", "sigal@ophirins.co.il": "סיגל",
+  "maytal@ophirins.co.il": "מיטל",
+};
+function sayName(name) {
+  return AGENT_HE[agentEmail(name)] ?? String(name || "").trim();
+}
+// The model often fires the availability check twice in a row. Cache the decision per
+// caller for a short window so both calls get the SAME answer (and we don't advance the
+// escalation on a duplicate, which once connected the caller to two people at once).
+const decisionCache = new Map(); // callerKey -> { decision, at }
+function cachedDecision(callerPhone) {
+  const k = callerKey(callerPhone);
+  const c = k && decisionCache.get(k);
+  return c && Date.now() - c.at < 45_000 ? c.decision : null;
+}
+function cacheDecision(callerPhone, decision) {
+  const k = callerKey(callerPhone);
+  if (k) decisionCache.set(k, { decision, at: Date.now() });
+}
 function isTravelRequest(name) {
   return /travel|נסיע/i.test(String(name || "")) || TRAVEL_STAFF.has(agentEmail(name));
 }
@@ -1034,18 +1057,26 @@ async function runMcpTool(name, a = {}) {
         return { ...office, status: "office_closed", transfer_to: null, instruction: "Do NOT transfer. Tell the caller the office is closed, take their details and send the staff member a message; say they will get back to the caller on the next business day." };
       // The server decides the whole thing in one call: who to connect to now (the
       // person asked for, or - for a travel request - the first free fallback), or a
-      // message if nobody is free. This is ONE availability check for the caller.
-      const { target, primaryStatus, escalated } = await pickTransferTarget(a.agent_name, a.caller_phone);
+      // message if nobody is free. The model often fires this check twice, so the
+      // decision is cached per caller and the duplicate gets the SAME answer.
+      let decision = cachedDecision(a.caller_phone);
+      if (!decision) {
+        decision = await pickTransferTarget(a.agent_name, a.caller_phone);
+        if (decision.target) recordTransfer(a.caller_phone, decision.target);
+        cacheDecision(a.caller_phone, decision);
+      }
+      const { target, primaryStatus, escalated } = decision;
       console.log("[transfer-check]", a.agent_name, "caller", a.caller_phone ? `…${String(a.caller_phone).replace(/\D/g, "").slice(-4)}` : "MISSING", "->", target || "MESSAGE");
       if (target) {
-        recordTransfer(a.caller_phone, target);
+        const say = sayName(target);
         return {
           ...office,
           status: "available",
           transfer_to: target,
+          say_name: say,
           instruction: escalated
-            ? `${a.agent_name} is not available right now. Tell the caller you are connecting them to ${target} instead, and transfer to ${target}.`
-            : `Available - tell the caller you are connecting them and transfer to ${target}.`,
+            ? `${sayName(a.agent_name)} is not available right now. Tell the caller in Hebrew you are connecting them to ${say} instead, then transfer_call to the "${target}" destination.`
+            : `Available - tell the caller in Hebrew you are connecting them to ${say}, then transfer_call to the "${target}" destination.`,
         };
       }
       return {
