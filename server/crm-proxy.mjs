@@ -242,6 +242,31 @@ function esc(v) {
     .replace(/"/g, "&quot;");
 }
 
+// Click-to-call from the notification email. The office PC runs a tiny local
+// listener (dalit-call.ps1) at CALL_RELAY_BASE; it asks the PBX to ring the desk
+// phone (CALL_RELAY_EXT) and connect it to the customer. The token, derived from
+// MCP_AUTH_TOKEN, stops a random page on that PC from placing calls. Set
+// CALL_RELAY=off to hide the button.
+const CALL_RELAY_BASE = process.env.CALL_RELAY_BASE || "http://127.0.0.1:8790";
+const CALL_RELAY_EXT = process.env.CALL_RELAY_EXT || "205";
+function callToken() {
+  const t = process.env.MCP_AUTH_TOKEN;
+  return t ? crypto.createHmac("sha256", t).update("call").digest("hex").slice(0, 24) : null;
+}
+function callButtonHtml(phone) {
+  const token = callToken();
+  const digits = String(phone || "").replace(/\D/g, "").replace(/^972/, "0");
+  if (!token || digits.length < 8 || String(process.env.CALL_RELAY ?? "on") === "off") return "";
+  const href = `${CALL_RELAY_BASE}/call?ext=${encodeURIComponent(CALL_RELAY_EXT)}&to=${encodeURIComponent(digits)}&token=${token}`;
+  return `
+        <tr>
+          <td style="padding:6px 28px 2px;">
+            <a href="${esc(href)}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:12px 22px;border-radius:10px;">📞 התקשר עכשיו מהטלפון במשרד</a>
+            <div style="margin-top:6px;color:#9ca3af;font-size:12px;">הטלפון שלך יצלצל, וכשתרים נחייג ללקוח.</div>
+          </td>
+        </tr>`;
+}
+
 // A clean, right-to-left HTML notification email in the Ophir Insurance style.
 function agentEmailHtml({ agentName, callerName, callerPhone, reason }) {
   const firstName = String(agentName || "").trim().split(/\s+/)[0] || "";
@@ -257,6 +282,10 @@ function agentEmailHtml({ agentName, callerName, callerPhone, reason }) {
   const phoneCell = phone
     ? `<a href="tel:${esc(telHref)}" style="color:#1d4ed8;text-decoration:none;direction:ltr;unicode-bidi:embed;display:inline-block;">${esc(phone)}</a>`
     : "—";
+  // Click-to-call button: opens the office-PC listener, which tells the PBX to ring
+  // the desk phone and connect it to this number. The token (derived from
+  // MCP_AUTH_TOKEN) stops any random web page on that PC from placing calls.
+  const callBtn = callButtonHtml(phone);
   return `<!DOCTYPE html>
 <html dir="rtl" lang="he">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -282,6 +311,7 @@ function agentEmailHtml({ agentName, callerName, callerPhone, reason }) {
             </table>
           </td>
         </tr>
+        ${callBtn}
         <tr>
           <td style="padding:8px 28px 26px;">
             <div style="background:#eff6ff;border-radius:12px;padding:14px 16px;color:#1e40af;font-size:13px;line-height:1.6;">
