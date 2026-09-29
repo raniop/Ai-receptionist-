@@ -253,16 +253,34 @@ function callToken() {
   const t = process.env.MCP_AUTH_TOKEN;
   return t ? crypto.createHmac("sha256", t).update("call").digest("hex").slice(0, 24) : null;
 }
-function callButtonHtml(phone) {
+// The click-to-call URL for this caller, aimed at the recipient's desk phone, or ""
+// when calling is off / the number is too short / no token.
+function callHref(phone, recipientName) {
   const token = callToken();
   const digits = String(phone || "").replace(/\D/g, "").replace(/^972/, "0");
   if (!token || digits.length < 8 || String(process.env.CALL_RELAY ?? "on") === "off") return "";
-  const href = `${CALL_RELAY_BASE}/call?ext=${encodeURIComponent(CALL_RELAY_EXT)}&to=${encodeURIComponent(digits)}&token=${token}`;
+  // Ring the recipient's own desk phone, and show the customer that person's direct
+  // line (never the bare extension). Unknown recipient (office lead) → Rani's phone.
+  const who = staffFor(recipientName);
+  const ext = who?.ext || CALL_RELAY_EXT;
+  const clid = who?.did || "0732721110";
+  return `${CALL_RELAY_BASE}/call?ext=${encodeURIComponent(ext)}&clid=${encodeURIComponent(clid)}&to=${encodeURIComponent(digits)}&token=${token}`;
+}
+// Small green "call" pill shown inline, right next to the phone number.
+function callPillHtml(href) {
+  if (!href) return "";
+  return `&nbsp;<a href="${esc(href)}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;font-size:12px;font-weight:700;line-height:1;padding:6px 11px;border-radius:999px;vertical-align:middle;">📞 חייג</a>`;
+}
+// Big primary call button under the details.
+function callButtonHtml(href) {
+  if (!href) return "";
   return `
         <tr>
-          <td style="padding:6px 28px 2px;">
-            <a href="${esc(href)}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;font-size:15px;font-weight:700;padding:12px 22px;border-radius:10px;">📞 התקשר עכשיו מהטלפון במשרד</a>
-            <div style="margin-top:6px;color:#9ca3af;font-size:12px;">הטלפון שלך יצלצל, וכשתרים נחייג ללקוח.</div>
+          <td style="padding:20px 28px 2px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" bgcolor="#16a34a" style="background:#16a34a;background:linear-gradient(135deg,#16a34a,#15803d);border-radius:12px;box-shadow:0 3px 8px rgba(21,128,61,.35);">
+              <a href="${esc(href)}" style="display:block;color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;padding:15px 24px;">📞&nbsp;&nbsp;התקשר עכשיו מהטלפון במשרד</a>
+            </td></tr></table>
+            <div style="margin-top:8px;text-align:center;color:#9ca3af;font-size:12px;">הטלפון שלך יצלצל, וכשתרים נחייג ללקוח אוטומטית.</div>
           </td>
         </tr>`;
 }
@@ -279,13 +297,14 @@ function agentEmailHtml({ agentName, callerName, callerPhone, reason }) {
           <td style="padding:10px 0;border-bottom:1px solid #eef1f5;color:#6b7280;font-size:14px;white-space:nowrap;vertical-align:top;width:88px;">${label}</td>
           <td style="padding:10px 0;border-bottom:1px solid #eef1f5;color:#111827;font-size:15px;font-weight:600;">${value}</td>
         </tr>`;
-  const phoneCell = phone
-    ? `<a href="tel:${esc(telHref)}" style="color:#1d4ed8;text-decoration:none;direction:ltr;unicode-bidi:embed;display:inline-block;">${esc(phone)}</a>`
-    : "—";
-  // Click-to-call button: opens the office-PC listener, which tells the PBX to ring
-  // the desk phone and connect it to this number. The token (derived from
+  // Click-to-call: opens the office-PC listener, which tells the PBX to ring the
+  // recipient's desk phone and connect it to this number. The token (derived from
   // MCP_AUTH_TOKEN) stops any random web page on that PC from placing calls.
-  const callBtn = callButtonHtml(phone);
+  const href = callHref(callerPhone, agentName);
+  const phoneCell = phone
+    ? `<span style="direction:ltr;unicode-bidi:embed;display:inline-block;"><a href="tel:${esc(telHref)}" style="color:#1d4ed8;text-decoration:none;">${esc(phone)}</a></span>${callPillHtml(href)}`
+    : "—";
+  const callBtn = callButtonHtml(href);
   return `<!DOCTYPE html>
 <html dir="rtl" lang="he">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -334,31 +353,37 @@ function agentEmailHtml({ agentName, callerName, callerPhone, reason }) {
 // Team email directory (server-side allowlist, so the browser can't email arbitrary
 // addresses). Names match src/content/site.ts. The voice agent may pass Hebrew or
 // the English labels of its transfer destinations ("Rani Ophir - operations").
-// ext = the desk phone's extension on the office PBX (for live busy/DND state).
+// ext = the desk phone's extension on the office PBX (live busy/DND state, and the
+// phone that rings on a click-to-call). did = the person's direct line, shown to the
+// customer as the caller ID on a click-to-call callback (never the bare extension).
 const STAFF = [
-  { email: "eli@ophirins.co.il", ext: "207", aliases: ["אלי", "eli"] },
-  { email: "hadar@ophirins.co.il", ext: "204", aliases: ["הדר", "hadar"] },
-  { email: "rani@ophirins.co.il", ext: "205", aliases: ["רני", "rani"] },
+  { email: "eli@ophirins.co.il", ext: "207", did: "0732721100", aliases: ["אלי", "eli"] },
+  { email: "hadar@ophirins.co.il", ext: "204", did: "0732721101", aliases: ["הדר", "hadar"] },
+  { email: "rani@ophirins.co.il", ext: "205", did: "0732721110", aliases: ["רני", "rani"] },
   { email: "gilad@ophirins.co.il", aliases: ["גלעד", "כרמונה", "gilad", "carmona"] },
-  { email: "ophir@ophirins.co.il", ext: "200", aliases: ["שיראל", "shirel", "secretary", "מזכיר"] },
+  { email: "ophir@ophirins.co.il", ext: "200", did: "0732721111", aliases: ["שיראל", "shirel", "secretary", "מזכיר"] },
   // Two Orits: only the full name matches, so a bare "Orit" falls back to the office.
-  { email: "orit_o@ophirins.co.il", ext: "201", aliases: ["אורית אופיר", "orit ophir", "orit ofir"] },
-  { email: "orit_c@ophirins.co.il", ext: "209", aliases: ["אורית כהן", "orit cohen"] },
-  { email: "rona@ophirins.co.il", ext: "208", aliases: ["רונה", "rona"] },
-  { email: "sigal@ophirins.co.il", ext: "206", aliases: ["סיגל", "sigal"] },
-  { email: "maytal@ophirins.co.il", ext: "210", aliases: ["מיטל", "מייטל", "maytal", "meital"] },
+  { email: "orit_o@ophirins.co.il", ext: "201", did: "0732721118", aliases: ["אורית אופיר", "orit ophir", "orit ofir"] },
+  { email: "orit_c@ophirins.co.il", ext: "209", did: "0732721116", aliases: ["אורית כהן", "orit cohen"] },
+  { email: "rona@ophirins.co.il", ext: "208", did: "0732721102", aliases: ["רונה", "rona"] },
+  { email: "sigal@ophirins.co.il", ext: "206", did: "0732721106", aliases: ["סיגל", "sigal"] },
+  { email: "maytal@ophirins.co.il", ext: "210", did: "0732721105", aliases: ["מיטל", "מייטל", "maytal", "meital"] },
 ];
-function agentEmail(name) {
+// The STAFF entry a free-text name best matches, by earliest-appearing alias.
+function staffFor(name) {
   const q = String(name || "").trim().toLowerCase();
   if (!q) return null;
-  // The alias that appears EARLIEST wins: "הדר גלעד" is Hadar, not Gilad Carmona.
   let best = null;
   for (const s of STAFF)
     for (const a of s.aliases) {
       const i = q.indexOf(a);
-      if (i >= 0 && (!best || i < best.i)) best = { i, email: s.email };
+      // The alias that appears EARLIEST wins: "הדר גלעד" is Hadar, not Gilad Carmona.
+      if (i >= 0 && (!best || i < best.i)) best = { i, s };
     }
-  return best?.email ?? null;
+  return best?.s ?? null;
+}
+function agentEmail(name) {
+  return staffFor(name)?.email ?? null;
 }
 
 // Everything sensitive (the CRM host, the service account) lives in .env, which is
