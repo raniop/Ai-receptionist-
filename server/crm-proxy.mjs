@@ -281,7 +281,7 @@ function callButtonHtml(href) {
 }
 
 // A clean, right-to-left HTML notification email in the Ophir Insurance style.
-function agentEmailHtml({ agentName, callerName, callerPhone, reason }) {
+function agentEmailHtml({ agentName, callerName, callerPhone, reason, monitoringFor }) {
   const firstName = String(agentName || "").trim().split(/\s+/)[0] || "";
   const greeting = firstName ? `שלום ${esc(firstName)},` : "שלום,";
   const phone = String(callerPhone || "").trim();
@@ -310,15 +310,20 @@ function agentEmailHtml({ agentName, callerName, callerPhone, reason }) {
     <tr><td align="center">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" dir="rtl" style="max-width:560px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);font-family:Arial,'Segoe UI',Helvetica,sans-serif;text-align:right;">
         <tr>
-          <td bgcolor="#1e3a8a" style="background-color:#1e3a8a;background:linear-gradient(135deg,#1e3a8a,#2563eb);padding:22px 28px;">
+          <td bgcolor="${monitoringFor ? "#92400e" : "#1e3a8a"}" style="background-color:${monitoringFor ? "#92400e" : "#1e3a8a"};background:${monitoringFor ? "linear-gradient(135deg,#b45309,#d97706)" : "linear-gradient(135deg,#1e3a8a,#2563eb)"};padding:22px 28px;">
             <div style="color:#ffffff;font-size:19px;font-weight:700;">אופיר ביטוח</div>
-            <div style="color:#bfdbfe;font-size:13px;margin-top:2px;">פנייה חדשה מדלית · הנציגה הקולית</div>
+            <div style="color:${monitoringFor ? "#fde68a" : "#bfdbfe"};font-size:13px;margin-top:2px;">${monitoringFor ? "עותק למעקב · הנציגה הקולית דלית" : "פנייה חדשה מדלית · הנציגה הקולית"}</div>
           </td>
         </tr>
+        ${monitoringFor ? `<tr>
+          <td style="padding:16px 28px 0;">
+            <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:12px;padding:12px 16px;color:#92400e;font-size:14px;font-weight:600;line-height:1.6;">👁️ עותק למעקב — הפנייה נשלחה אל ${esc(monitoringFor)}. אין צורך לחזור ללקוח, זו הודעת מעקב עבורך בלבד.</div>
+          </td>
+        </tr>` : ""}
         <tr>
-          <td style="padding:28px 28px 8px;">
+          <td style="padding:${monitoringFor ? "16px" : "28px"} 28px 8px;">
             <p style="margin:0 0 6px;color:#111827;font-size:16px;font-weight:600;">${greeting}</p>
-            <p style="margin:0 0 20px;color:#4b5563;font-size:14px;line-height:1.6;">התקבלה עבורך בקשת חזרה בשיחה קולית עם דלית. להלן הפרטים:</p>
+            <p style="margin:0 0 20px;color:#4b5563;font-size:14px;line-height:1.6;">${monitoringFor ? `דלית העבירה פנייה אל ${esc(monitoringFor)}. הנה הפרטים למעקב שלך:` : "התקבלה עבורך בקשת חזרה בשיחה קולית עם דלית. להלן הפרטים:"}</p>
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
               ${row("שם המתקשר", esc(callerName) || "—")}
               ${row("טלפון", phoneCell)}
@@ -327,11 +332,11 @@ function agentEmailHtml({ agentName, callerName, callerPhone, reason }) {
             </table>
           </td>
         </tr>
-        ${callBtn}
+        ${monitoringFor ? "" : callBtn}
         <tr>
           <td style="padding:8px 28px 26px;">
-            <div style="background:#eff6ff;border-radius:12px;padding:14px 16px;color:#1e40af;font-size:13px;line-height:1.6;">
-              💡 נא לחזור ללקוח בהקדם. הפנייה נרשמה אוטומטית במערכת.
+            <div style="background:${monitoringFor ? "#f9fafb" : "#eff6ff"};border-radius:12px;padding:14px 16px;color:${monitoringFor ? "#6b7280" : "#1e40af"};font-size:13px;line-height:1.6;">
+              ${monitoringFor ? `📋 עותק זה נשלח אליך למעקב בלבד. ${esc(monitoringFor)} טיפל/ת בפנייה מול הלקוח.` : "💡 נא לחזור ללקוח בהקדם. הפנייה נרשמה אוטומטית במערכת."}
             </div>
           </td>
         </tr>
@@ -718,6 +723,9 @@ async function liveStatusOf(name) {
 // generic request never spreads to the rest of the team.
 const DEFAULT_PRIMARY = "rani@ophirins.co.il";
 const DEFAULT_FALLBACK = ["שיראל"];
+// Eli manages the general-insurance desk and wants a monitoring copy of every message
+// to these people.
+const ELI_MONITORS = new Set(["sigal@ophirins.co.il", "rona@ophirins.co.il", "maytal@ophirins.co.il"]);
 // The English name each transfer destination is labelled with in the xAI console, so
 // transfer_to matches a real transfer_call destination.
 const AGENT_LABEL = {
@@ -1150,9 +1158,17 @@ async function runMcpTool(name, a = {}) {
       if (!reqEmail || involvedEmails(a.caller_phone).has(reqEmail))
         for (const t of involvedList(a.caller_phone)) addRecipient(t.he);
       let emailed = false;
-      for (const nm of recipients.values()) {
+      const monitored = []; // people Eli should get a monitoring copy about
+      for (const [email, nm] of recipients) {
         const r = await mcpInternal("/api/notify/agent", { method: "POST", body: { agent_name: nm, caller_name: a.caller_name, caller_phone: a.caller_phone, reason: a.reason } });
         emailed = emailed || r.emailed;
+        if (r.emailed && ELI_MONITORS.has(email)) monitored.push(nm);
+      }
+      // Eli manages the general-insurance desk (Sigal, Rona, Maytal): send him a
+      // clearly-marked monitoring copy so he can keep an eye on those, unless he is
+      // already a direct recipient.
+      if (monitored.length && !recipients.has(agentEmail("Eli Ophir"))) {
+        await mcpInternal("/api/notify/agent", { method: "POST", body: { agent_name: "Eli Ophir", caller_name: a.caller_name, caller_phone: a.caller_phone, reason: a.reason, monitoring_for: sayName(monitored[0]) } }).catch(() => {});
       }
       if (emailed) return { ok: true, emailed: true, sent_to: [...recipients.values()] };
       // Unknown name or a mail failure — never lose the message: send it to the office.
@@ -1481,13 +1497,13 @@ const server = http.createServer(async (req, res) => {
 
     // Email a team member the details of a caller who asked for them.
     if (req.method === "POST" && url.pathname === "/api/notify/agent") {
-      const { agent_name, caller_name, caller_phone, reason } = await readJson(req);
+      const { agent_name, caller_name, caller_phone, reason, monitoring_for } = await readJson(req);
       const to = agentEmail(agent_name);
       if (!to) return send(res, 400, { error: "unknown_agent" });
       if (!graphConfigured && !mailer)
         return send(res, 200, { ok: false, emailed: false, reason: "email_not_configured" });
-      const subject = `בקשת חזרה — ${caller_name || "מתקשר"}`;
-      const html = agentEmailHtml({ agentName: agent_name, callerName: caller_name, callerPhone: caller_phone, reason });
+      const subject = monitoring_for ? `[מעקב] פנייה ל${monitoring_for} — ${caller_name || "מתקשר"}` : `בקשת חזרה — ${caller_name || "מתקשר"}`;
+      const html = agentEmailHtml({ agentName: agent_name, callerName: caller_name, callerPhone: caller_phone, reason, monitoringFor: monitoring_for });
       const text =
         `דלית, הנציגה הקולית, קיבלה עבורך פנייה:\n\n` +
         `שם: ${caller_name || "—"}\n` +
