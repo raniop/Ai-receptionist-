@@ -726,6 +726,11 @@ const DEFAULT_FALLBACK = ["שיראל"];
 // Eli manages the general-insurance desk and wants a monitoring copy of every message
 // to these people.
 const ELI_MONITORS = new Set(["sigal@ophirins.co.il", "rona@ophirins.co.il", "maytal@ophirins.co.il"]);
+// Gilad is mostly out of the office and has no desk phone: never route a caller to him.
+// A request for Gilad becomes the default request (Rani, then Shirel).
+function routedAgent(name) {
+  return agentEmail(name) === "gilad@ophirins.co.il" ? "Rani Ophir" : name;
+}
 // The English name each transfer destination is labelled with in the xAI console, so
 // transfer_to matches a real transfer_call destination.
 const AGENT_LABEL = {
@@ -1086,6 +1091,7 @@ async function runMcpTool(name, a = {}) {
     case "travel_quote_answer":
       return answerQuote(a);
     case "check_agent_status": {
+      a = { ...a, agent_name: routedAgent(a.agent_name) }; // a request for Gilad -> Rani
       // The office clock is decided here; the model got open/closed wrong.
       const office = officeStatus();
       if (!office.office_open)
@@ -1146,7 +1152,7 @@ async function runMcpTool(name, a = {}) {
       // A message nobody can call back is useless: require a valid Israeli number.
       const pv = israeliPhone(a.caller_phone);
       if (!pv.ok) return { ok: false, emailed: false, error: BAD_PHONE_MSG };
-      a = { ...a, caller_phone: pv.phone };
+      a = { ...a, caller_phone: pv.phone, agent_name: routedAgent(a.agent_name) }; // Gilad -> Rani
       // Send to the person asked for AND anyone this caller was bounced from, so after
       // Rani and Shirel both missed the call, both of them get the callback request.
       const recipients = new Map(); // email -> display name
