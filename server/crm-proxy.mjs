@@ -723,9 +723,15 @@ async function liveStatusOf(name) {
 // generic request never spreads to the rest of the team.
 const DEFAULT_PRIMARY = "rani@ophirins.co.il";
 const DEFAULT_FALLBACK = ["שיראל"];
-// Eli manages the general-insurance desk and wants a monitoring copy of every message
-// to these people.
-const ELI_MONITORS = new Set(["sigal@ophirins.co.il", "rona@ophirins.co.il", "maytal@ophirins.co.il"]);
+// Rani and Eli want a monitoring copy of EVERY message Dalit sends, for oversight.
+const MONITORS = ["Rani Ophir", "Eli Ophir"];
+async function sendMonitorCopies(recipientEmails, msg, forDisplay) {
+  for (const mon of MONITORS) {
+    const e = agentEmail(mon);
+    if (!e || recipientEmails.has(e)) continue; // already a direct recipient - skip
+    await mcpInternal("/api/notify/agent", { method: "POST", body: { agent_name: mon, caller_name: msg.caller_name, caller_phone: msg.caller_phone, reason: msg.reason, monitoring_for: forDisplay } }).catch(() => {});
+  }
+}
 // Gilad is mostly out of the office and has no desk phone: never route a caller to him.
 // A request for Gilad becomes the default request (Rani, then Shirel).
 function routedAgent(name) {
@@ -1164,24 +1170,23 @@ async function runMcpTool(name, a = {}) {
       if (!reqEmail || involvedEmails(a.caller_phone).has(reqEmail))
         for (const t of involvedList(a.caller_phone)) addRecipient(t.he);
       let emailed = false;
-      const monitored = []; // people Eli should get a monitoring copy about
-      for (const [email, nm] of recipients) {
+      for (const nm of recipients.values()) {
         const r = await mcpInternal("/api/notify/agent", { method: "POST", body: { agent_name: nm, caller_name: a.caller_name, caller_phone: a.caller_phone, reason: a.reason } });
         emailed = emailed || r.emailed;
-        if (r.emailed && ELI_MONITORS.has(email)) monitored.push(nm);
       }
-      // Eli manages the general-insurance desk (Sigal, Rona, Maytal): send him a
-      // clearly-marked monitoring copy so he can keep an eye on those, unless he is
-      // already a direct recipient.
-      if (monitored.length && !recipients.has(agentEmail("Eli Ophir"))) {
-        await mcpInternal("/api/notify/agent", { method: "POST", body: { agent_name: "Eli Ophir", caller_name: a.caller_name, caller_phone: a.caller_phone, reason: a.reason, monitoring_for: sayName(monitored[0]) } }).catch(() => {});
+      if (emailed) {
+        // Rani + Eli always get a marked monitoring copy (unless already a recipient).
+        const forDisplay = [...recipients.keys()].map((e) => AGENT_HE[e] || e).join(", ");
+        await sendMonitorCopies(new Set(recipients.keys()), { caller_name: a.caller_name, caller_phone: a.caller_phone, reason: a.reason }, forDisplay);
+        return { ok: true, emailed: true, sent_to: [...recipients.values()] };
       }
-      if (emailed) return { ok: true, emailed: true, sent_to: [...recipients.values()] };
       // Unknown name or a mail failure — never lose the message: send it to the office.
       const l = await mcpInternal("/api/notify/lead", { method: "POST", body: { full_name: a.caller_name, phone: a.caller_phone, topic: `הודעה עבור ${a.agent_name}: ${a.reason || "בקשת חזרה"}` } });
-      return l.emailed
-        ? { ok: true, emailed: true, delivered_to: "office" }
-        : { ok: false, emailed: false, error: "ההודעה לא נשלחה. אל תגידי שהיא הועברה — התנצלי והציעי להתקשר למשרד בשעות הפעילות, 073-2721111." };
+      if (l.emailed) {
+        await sendMonitorCopies(new Set(), { caller_name: a.caller_name, caller_phone: a.caller_phone, reason: a.reason }, "המשרד");
+        return { ok: true, emailed: true, delivered_to: "office" };
+      }
+      return { ok: false, emailed: false, error: "ההודעה לא נשלחה. אל תגידי שהיא הועברה — התנצלי והציעי להתקשר למשרד בשעות הפעילות, 073-2721111." };
     }
     case "leave_message_for_office":
     case "save_lead": {
@@ -1189,9 +1194,12 @@ async function runMcpTool(name, a = {}) {
       const pv = israeliPhone(a.phone);
       if (!pv.ok) return { ok: false, emailed: false, error: BAD_PHONE_MSG };
       const r = await mcpInternal("/api/notify/lead", { method: "POST", body: { full_name: a.full_name, phone: pv.phone, topic: a.topic } });
-      return r.emailed
-        ? { ok: true, emailed: true }
-        : { ok: false, emailed: false, error: "הפנייה לא נשלחה. אל תגידי שהיא נרשמה — התנצלי והציעי להתקשר למשרד בשעות הפעילות, 073-2721111." };
+      if (r.emailed) {
+        // Rani + Eli always get a marked monitoring copy of office leads too.
+        await sendMonitorCopies(new Set(), { caller_name: a.full_name, caller_phone: pv.phone, reason: a.topic }, "המשרד");
+        return { ok: true, emailed: true };
+      }
+      return { ok: false, emailed: false, error: "הפנייה לא נשלחה. אל תגידי שהיא נרשמה — התנצלי והציעי להתקשר למשרד בשעות הפעילות, 073-2721111." };
     }
     default:
       return { ok: false, error: `unknown tool: ${name}` };
