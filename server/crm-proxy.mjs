@@ -621,29 +621,31 @@ function agentKey(name) {
 }
 /** This caller was already transferred to this person in the last few minutes. */
 function triedRecently(callerPhone, name) {
-  return recentAttempts(callerPhone).some((t) => t.email === agentKey(name));
+  return recentAttempts(callerPhone).some((t) => t.target === agentKey(name));
 }
 /** How many DISTINCT people this caller was transferred to lately (cap the chase). */
 function distinctTries(callerPhone) {
-  return new Set(recentAttempts(callerPhone).map((t) => t.email)).size;
+  return new Set(recentAttempts(callerPhone).map((t) => t.target)).size;
 }
-function recordTransfer(callerPhone, name) {
+// Records BOTH who the caller asked for and who actually rang, so a later call about a
+// DIFFERENT topic is not mistaken for the same one coming back.
+function recordTransfer(callerPhone, requestedName, targetName) {
   const k = callerKey(callerPhone);
   if (!k) return;
   const past = recentAttempts(callerPhone);
-  past.push({ email: agentKey(name), at: Date.now() });
+  past.push({ req: agentKey(requestedName), target: agentKey(targetName), at: Date.now() });
   transferAttempts.set(k, past);
 }
-// Distinct people this caller was already connected to (and came back from), newest
-// last, as { email, he, label } - so we can email all of them and name them.
-function triedList(callerPhone) {
-  const seen = new Set();
+// Everyone involved in this caller's recent attempts (asked-for + rang), so we can tell
+// whether a new request is "the same one coming back" and who to email/name.
+function involvedEmails(callerPhone) {
+  const s = new Set();
+  for (const t of recentAttempts(callerPhone)) { if (t.req) s.add(t.req); if (t.target) s.add(t.target); }
+  return s;
+}
+function involvedList(callerPhone) {
   const out = [];
-  for (const t of recentAttempts(callerPhone)) {
-    if (seen.has(t.email)) continue;
-    seen.add(t.email);
-    out.push({ email: t.email, he: AGENT_HE[t.email] || t.email, label: AGENT_LABEL[t.email] || t.email });
-  }
+  for (const e of involvedEmails(callerPhone)) out.push({ email: e, he: AGENT_HE[e] || e, label: AGENT_LABEL[e] || e });
   return out;
 }
 
@@ -1074,12 +1076,16 @@ async function runMcpTool(name, a = {}) {
       // SAME answer. A caller who was already transferred and CAME BACK (tried, and no
       // fresh cache) is not sent around again: take a message for everyone tried.
       const cached = cachedDecision(a.caller_phone);
-      const tried = triedList(a.caller_phone);
+      // "Same call coming back" only when they ask again for someone already involved
+      // (or ask generically). A NEW topic (e.g. car insurance -> Sigal) is handled fresh.
+      const requestedEmail = agentEmail(a.agent_name);
+      const involved = involvedEmails(a.caller_phone);
+      const sameComingBack = involved.size > 0 && (!requestedEmail || involved.has(requestedEmail));
       let decision;
       if (cached) {
         decision = cached;
-      } else if (tried.length) {
-        const names = tried.map((t) => t.he);
+      } else if (sameComingBack) {
+        const names = involvedList(a.caller_phone).map((t) => t.he);
         const list = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names[0];
         console.log("[transfer-check]", a.agent_name, "->", "NO-ANSWER, message to", names.join("+"));
         return {
@@ -1087,11 +1093,11 @@ async function runMcpTool(name, a = {}) {
           status: "no_answer",
           transfer_to: null,
           tried_names: names,
-          instruction: `This caller was already connected to ${list} and nobody answered. Do NOT transfer again. Tell the caller, in Hebrew, that ${list} could not answer, so you will ask one of them to call back - take a message (name, what it is about, confirm the callback number) and it will be sent to all of them.`,
+          instruction: `This caller already tried to reach ${list} and nobody answered. Do NOT transfer again. Tell the caller, in Hebrew, that ${list} could not answer, so you will ask one of them to call back - take a message (name, what it is about, confirm the callback number). Send it with contact_agent ONCE; it goes to all of them.`,
         };
       } else {
         decision = await pickTransferTarget(a.agent_name, a.caller_phone);
-        if (decision.target) recordTransfer(a.caller_phone, decision.target);
+        if (decision.target) recordTransfer(a.caller_phone, a.agent_name, decision.target);
         cacheDecision(a.caller_phone, decision);
       }
       const { target, primaryStatus, escalated } = decision;
@@ -1125,7 +1131,11 @@ async function runMcpTool(name, a = {}) {
       const recipients = new Map(); // email -> display name
       const addRecipient = (nm) => { const e = agentEmail(nm); if (e && !recipients.has(e)) recipients.set(e, nm); };
       addRecipient(a.agent_name);
-      for (const t of triedList(a.caller_phone)) addRecipient(t.he);
+      // Also everyone this caller already tried, but ONLY when this message is for one
+      // of them (or generic) - a fresh topic (car insurance -> Sigal) goes to Sigal alone.
+      const reqEmail = agentEmail(a.agent_name);
+      if (!reqEmail || involvedEmails(a.caller_phone).has(reqEmail))
+        for (const t of involvedList(a.caller_phone)) addRecipient(t.he);
       let emailed = false;
       for (const nm of recipients.values()) {
         const r = await mcpInternal("/api/notify/agent", { method: "POST", body: { agent_name: nm, caller_name: a.caller_name, caller_phone: a.caller_phone, reason: a.reason } });
