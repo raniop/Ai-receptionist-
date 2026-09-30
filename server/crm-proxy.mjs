@@ -713,10 +713,11 @@ async function liveStatusOf(name) {
   return r.status ?? "available";
 }
 
-// Travel-desk escalation (Rani's rule): if the person a travel caller asked for is not
-// free, try Shirel, then Eli, then Hadar, and connect the caller to the first one free.
-const TRAVEL_STAFF = new Set(["rani@ophirins.co.il", "hadar@ophirins.co.il", "gilad@ophirins.co.il"]);
-const TRAVEL_FALLBACK = ["שיראל", "אלי אופיר", "הדר גלעד"];
+// Default escalation (Rani's rule): a caller who did NOT name a specific employee is
+// routed to Rani; if Rani is not free, connect them to Shirel. Only these two - a
+// generic request never spreads to the rest of the team.
+const DEFAULT_PRIMARY = "rani@ophirins.co.il";
+const DEFAULT_FALLBACK = ["שיראל"];
 // The English name each transfer destination is labelled with in the xAI console, so
 // transfer_to matches a real transfer_call destination.
 const AGENT_LABEL = {
@@ -754,20 +755,20 @@ function cacheDecision(callerPhone, decision) {
   const k = callerKey(callerPhone);
   if (k) decisionCache.set(k, { decision, at: Date.now() });
 }
-function isTravelRequest(name) {
-  return /travel|נסיע/i.test(String(name || "")) || TRAVEL_STAFF.has(agentEmail(name));
+// Escalate only for the default (unnamed) request, which comes in as Rani.
+function isDefaultRequest(name) {
+  return agentEmail(name) === DEFAULT_PRIMARY;
 }
 // The person to actually connect this caller to now, or null to take a message.
-// Skips anyone this caller was just bounced from, and caps the whole-team chase.
+// Skips anyone this caller was just bounced from, and caps the chase.
 async function pickTransferTarget(primaryName, callerPhone) {
   const primaryStatus = await liveStatusOf(primaryName);
-  // After two people were already connected and the caller still came back, stop
-  // bouncing them around: take a message for everyone tried instead.
   const capReached = distinctTries(callerPhone) >= 2;
   const usable = async (name) => !triedRecently(callerPhone, name) && (await liveStatusOf(name)) === "available";
   if (!capReached && (await usable(primaryName))) return { target: canonicalName(primaryName), primaryStatus };
-  if (!capReached && isTravelRequest(primaryName)) {
-    for (const cand of TRAVEL_FALLBACK) {
+  // Only a generic request (Rani) falls back - to Shirel, nobody else.
+  if (!capReached && isDefaultRequest(primaryName)) {
+    for (const cand of DEFAULT_FALLBACK) {
       if (agentKey(cand) === agentKey(primaryName)) continue;
       if (await usable(cand)) return { target: canonicalName(cand), primaryStatus, escalated: true };
     }
