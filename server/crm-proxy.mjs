@@ -608,6 +608,17 @@ function callerKey(callerPhone) {
   const p = String(callerPhone ?? "").replace(/\D/g, "").slice(-8);
   return p.length >= 8 ? p : null;
 }
+// Validate/normalise an Israeli number. A dictated number is easy to mis-hear, so a
+// mobile (05...) must be exactly 10 digits; a landline/VoIP (0...) is 9 or 10. Returns
+// { ok, phone } - phone is the clean 0-prefixed form.
+function israeliPhone(raw) {
+  let d = String(raw ?? "").replace(/\D/g, "");
+  if (d.startsWith("972")) d = "0" + d.slice(3);
+  if (/^05/.test(d)) return { ok: d.length === 10, phone: d };
+  if (/^0/.test(d)) return { ok: d.length === 9 || d.length === 10, phone: d };
+  return { ok: false, phone: d };
+}
+const BAD_PHONE_MSG = "The phone number looks incomplete or invalid - a mobile must be 10 digits (05X-XXX-XXXX). Do NOT send. Read the number back to the caller, ask them to say the WHOLE number again slowly, and only send after they confirm it is correct.";
 function recentAttempts(callerPhone) {
   const k = callerKey(callerPhone);
   if (!k) return [];
@@ -1123,9 +1134,10 @@ async function runMcpTool(name, a = {}) {
       };
     }
     case "contact_agent": {
-      // A message nobody can call back is useless: require a real phone number.
-      if (String(a.caller_phone ?? "").replace(/\D/g, "").length < 9)
-        return { ok: false, emailed: false, error: "Missing or invalid phone number. Ask the caller for their phone number (or confirm the number they are calling from), then send again. Do not tell the caller the message was sent." };
+      // A message nobody can call back is useless: require a valid Israeli number.
+      const pv = israeliPhone(a.caller_phone);
+      if (!pv.ok) return { ok: false, emailed: false, error: BAD_PHONE_MSG };
+      a = { ...a, caller_phone: pv.phone };
       // Send to the person asked for AND anyone this caller was bounced from, so after
       // Rani and Shirel both missed the call, both of them get the callback request.
       const recipients = new Map(); // email -> display name
@@ -1150,10 +1162,10 @@ async function runMcpTool(name, a = {}) {
     }
     case "leave_message_for_office":
     case "save_lead": {
-      // A message nobody can call back is useless: require a real phone number.
-      if (String(a.phone ?? "").replace(/\D/g, "").length < 9)
-        return { ok: false, emailed: false, error: "Missing or invalid phone number. Ask the caller for their phone number (or confirm the number they are calling from), then send again. Do not tell the caller the message was sent." };
-      const r = await mcpInternal("/api/notify/lead", { method: "POST", body: { full_name: a.full_name, phone: a.phone, topic: a.topic } });
+      // A message nobody can call back is useless: require a valid Israeli number.
+      const pv = israeliPhone(a.phone);
+      if (!pv.ok) return { ok: false, emailed: false, error: BAD_PHONE_MSG };
+      const r = await mcpInternal("/api/notify/lead", { method: "POST", body: { full_name: a.full_name, phone: pv.phone, topic: a.topic } });
       return r.emailed
         ? { ok: true, emailed: true }
         : { ok: false, emailed: false, error: "הפנייה לא נשלחה. אל תגידי שהיא נרשמה — התנצלי והציעי להתקשר למשרד בשעות הפעילות, 073-2721111." };
