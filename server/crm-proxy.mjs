@@ -752,7 +752,7 @@ function canonicalName(name) {
 // Hebrew first name, so Dalit says "שיראל" (not the English "Shirel" -> "שירל").
 const AGENT_HE = {
   "rani@ophirins.co.il": "רני", "eli@ophirins.co.il": "אלי", "hadar@ophirins.co.il": "הדר",
-  "gilad@ophirins.co.il": "גלעד", "ophir@ophirins.co.il": "שירֶל", "orit_o@ophirins.co.il": "אורית אופיר",
+  "gilad@ophirins.co.il": "גלעד", "ophir@ophirins.co.il": "שיראל", "orit_o@ophirins.co.il": "אורית אופיר",
   "orit_c@ophirins.co.il": "אורית כהן", "rona@ophirins.co.il": "רונה", "sigal@ophirins.co.il": "סיגל",
   "maytal@ophirins.co.il": "מיטל",
 };
