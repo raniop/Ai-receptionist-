@@ -30,6 +30,7 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { startQuote, answerQuote } from "./quote.mjs";
 import { officeStatus } from "./office-hours.mjs";
+import { recordLead, handleLeadsRequest } from "./leads.mjs";
 import nodemailer from "nodemailer";
 
 const {
@@ -1178,6 +1179,8 @@ async function runMcpTool(name, a = {}) {
         // Rani + Eli always get a marked monitoring copy (unless already a recipient).
         const forDisplay = [...recipients.keys()].map((e) => AGENT_HE[e] || e).join(", ");
         await sendMonitorCopies(new Set(recipients.keys()), { caller_name: a.caller_name, caller_phone: a.caller_phone, reason: a.reason }, forDisplay);
+        const who = staffFor(a.agent_name);
+        recordLead({ caller_name: a.caller_name, caller_phone: a.caller_phone, topic: a.reason, sent_to: [...recipients.keys()].map((e) => AGENT_HE[e] || e), call: who?.ext ? { ext: who.ext, clid: who.did, to: a.caller_phone } : null });
         return { ok: true, emailed: true, sent_to: [...recipients.values()] };
       }
       // Unknown name or a mail failure — never lose the message: send it to the office.
@@ -1197,6 +1200,7 @@ async function runMcpTool(name, a = {}) {
       if (r.emailed) {
         // Rani + Eli always get a marked monitoring copy of office leads too.
         await sendMonitorCopies(new Set(), { caller_name: a.full_name, caller_phone: pv.phone, reason: a.topic }, "המשרד");
+        recordLead({ caller_name: a.full_name, caller_phone: pv.phone, topic: a.topic, sent_to: ["המשרד"], call: { ext: "205", clid: "0732721110", to: pv.phone } });
         return { ok: true, emailed: true };
       }
       return { ok: false, emailed: false, error: "הפנייה לא נשלחה. אל תגידי שהיא נרשמה — התנצלי והציעי להתקשר למשרד בשעות הפעילות, 073-2721111." };
@@ -1242,6 +1246,9 @@ const server = http.createServer(async (req, res) => {
     return;
   }
   if (req.method === "OPTIONS") return send(res, 204, {});
+
+  // Leads board (/leads page + /api/leads). Returns true when it handled the request.
+  if (await handleLeadsRequest(req, res, url)) return;
 
   try {
     // 1) send OTP — the caller gives ONLY their ID; we look up the phone on file and

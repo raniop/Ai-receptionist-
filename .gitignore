@@ -26,3 +26,4 @@ package-lock.json
 # Runtime agent availability state
 server/agent-status.json
 server/presence.json
+server/leads.json
