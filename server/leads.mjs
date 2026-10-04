@@ -168,14 +168,17 @@ header a{color:#bfdbfe;font-size:13px;text-decoration:none}
 .meta{color:#6b7280;font-size:12px}
 .actions{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .btn{border:1px solid #d1d5db;background:#fff;border-radius:9px;padding:7px 12px;font-size:13px;cursor:pointer;font-weight:600}
-.btn.p{background:#16a34a;color:#fff;border-color:#16a34a}.btn.call{background:#16a34a;color:#fff;border-color:#16a34a}
+.btn.p{background:#16a34a;color:#fff;border-color:#16a34a}
+.btn.call{background:#2563eb;color:#fff;border-color:#2563eb}
 .btn.w{background:#d97706;color:#fff;border-color:#d97706}
+.lbl{color:#6b7280;font-size:13px;font-weight:700;align-self:center}
+#people .chip{padding:6px 12px;font-size:12px}
 .notes{margin-top:8px;font-size:12px;color:#4b5563;background:#f9fafb;border-radius:8px;padding:6px 10px}
 .empty{text-align:center;color:#9ca3af;padding:40px}
 @media(max-width:560px){.wrap{padding:12px}}
 </style></head><body>
 <header><h1>📋 לוח פניות — אופיר ביטוח</h1><div class="sp"></div><span id="count"></span><a href="/leads/logout">יציאה</a></header>
-<div class="bar">
+<div class="bar" id="status">
   <span class="chip on" data-f="open">פתוחות</span>
   <span class="chip" data-f="new">חדשות</span>
   <span class="chip" data-f="in_progress">בטיפול</span>
@@ -183,15 +186,29 @@ header a{color:#bfdbfe;font-size:13px;text-decoration:none}
   <span class="chip" data-f="all">הכול</span>
   <input id="q" placeholder="חיפוש שם / טלפון / נושא...">
 </div>
+<div class="bar" id="people">
+  <span class="lbl">נציג:</span>
+  <span class="chip on" data-p="all">כולם</span>
+  <span class="chip" data-p="רני">רני</span>
+  <span class="chip" data-p="שיראל">שיראל</span>
+  <span class="chip" data-p="אלי">אלי</span>
+  <span class="chip" data-p="הדר">הדר</span>
+  <span class="chip" data-p="סיגל">סיגל</span>
+  <span class="chip" data-p="רונה">רונה</span>
+  <span class="chip" data-p="מיטל">מיטל</span>
+  <span class="chip" data-p="אורית אופיר">אורית אופיר</span>
+  <span class="chip" data-p="אורית כהן">אורית כהן</span>
+  <span class="chip" data-p="המשרד">המשרד</span>
+</div>
 <div class="wrap" id="list"></div>
 <script>
-let LEADS=[],TOKEN="",BASE="",filter="open",q="";
+let LEADS=[],TOKEN="",BASE="",filter="open",person="all",q="";
 const HE={new:"חדש",in_progress:"בטיפול",done:"טופל"};
 async function load(){const r=await fetch('/api/leads');if(r.status===401){location.href='/leads';return;}const d=await r.json();LEADS=d.leads;TOKEN=d.call_token;BASE=d.call_base;render();}
 function fmt(iso){const d=new Date(iso);return d.toLocaleString('he-IL',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});}
 function callUrl(l){if(!l.call)return null;const p=new URLSearchParams({ext:l.call.ext||'205',clid:l.call.clid||'',to:l.call.to,token:TOKEN});return BASE+'/call?'+p.toString();}
 function match(l){const s=(l.caller_name+' '+l.caller_phone+' '+l.topic+' '+l.sent_to.join(' ')).toLowerCase();return s.includes(q.toLowerCase());}
-function visible(){return LEADS.filter(l=>{if(filter==='open')return l.status!=='done';if(filter==='all')return true;return l.status===filter;}).filter(match);}
+function visible(){return LEADS.filter(l=>{if(filter==='open')return l.status!=='done';if(filter==='all')return true;return l.status===filter;}).filter(l=>person==='all'||l.sent_to.some(n=>n.indexOf(person)>=0)).filter(match);}
 function render(){const rows=visible();document.getElementById('count').textContent=rows.length+' פניות';
 const L=document.getElementById('list');if(!rows.length){L.innerHTML='<div class="empty">אין פניות להצגה</div>';return;}
 L.innerHTML=rows.map(l=>{const cu=callUrl(l);
@@ -210,7 +227,8 @@ return '<div class="lead '+l.status+'"><div class="top"><span class="name">'+esc
 async function upd(id,patch){await fetch('/api/leads/'+id,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(patch)});load();}
 function note(id){const t=prompt('הערה:');if(t)upd(id,{note:t});}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
-document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{document.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));c.classList.add('on');filter=c.dataset.f;render();});
+document.querySelectorAll('#status .chip').forEach(c=>c.onclick=()=>{document.querySelectorAll('#status .chip').forEach(x=>x.classList.remove('on'));c.classList.add('on');filter=c.dataset.f;render();});
+document.querySelectorAll('#people .chip').forEach(c=>c.onclick=()=>{document.querySelectorAll('#people .chip').forEach(x=>x.classList.remove('on'));c.classList.add('on');person=c.dataset.p;render();});
 document.getElementById('q').oninput=e=>{q=e.target.value;render();};
 load();setInterval(load,20000);
 </script></body></html>`;
