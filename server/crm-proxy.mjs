@@ -608,7 +608,10 @@ function presenceFor(name) {
 // Rani is available" three times). We remember who each caller was transferred to,
 // so we never send them back to the SAME person, and we cap the whole team chase.
 const transferAttempts = new Map(); // last 8 digits of the caller's phone → [{ email, at }]
-const TRANSFER_WINDOW_MS = 10 * 60_000;
+// Short: this only exists to catch a call that was just transferred, rang unanswered,
+// and the PBX handed straight back to Dalit (seconds). A fresh call a few minutes later
+// is a NEW inquiry and must get a REAL availability check, not an instant "already tried".
+const TRANSFER_WINDOW_MS = 3 * 60_000;
 function callerKey(callerPhone) {
   // 8 digits match both 03-7130143 and +972-3-7130143 (a landline has one fewer digit).
   const p = String(callerPhone ?? "").replace(/\D/g, "").slice(-8);
