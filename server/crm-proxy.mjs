@@ -727,6 +727,12 @@ async function liveStatusOf(name) {
 // generic request never spreads to the rest of the team.
 const DEFAULT_PRIMARY = "rani@ophirins.co.il";
 const DEFAULT_FALLBACK = ["שיראל"];
+// For an URGENT caller ("I need someone now") we skip the questions and connect them
+// to the FIRST free person anywhere, in this priority order.
+const URGENT_CHAIN = ["רני", "שיראל", "אלי", "הדר", "סיגל", "רונה", "מיטל", "אורית אופיר", "אורית כהן"];
+function isUrgentRequest(name) {
+  return /anyone|urgent|דחוף/i.test(String(name || "")) && !agentEmail(name);
+}
 // Rani and Eli want a monitoring copy of EVERY message Dalit sends, for oversight.
 const MONITORS = ["Rani Ophir", "Eli Ophir"];
 async function sendMonitorCopies(recipientEmails, msg, forDisplay) {
@@ -1106,6 +1112,18 @@ async function runMcpTool(name, a = {}) {
       const office = officeStatus();
       if (!office.office_open)
         return { ...office, status: "office_closed", transfer_to: null, instruction: "Do NOT transfer. Tell the caller the office is closed, take their details and send the staff member a message; say they will get back to the caller on the next business day." };
+      // URGENT caller: skip everything and connect them to the first free person.
+      if (isUrgentRequest(a.agent_name)) {
+        for (const cand of URGENT_CHAIN) {
+          if (triedRecently(a.caller_phone, cand)) continue;
+          if ((await liveStatusOf(cand)) === "available") {
+            recordTransfer(a.caller_phone, "anyone", cand);
+            const say = sayName(cand);
+            return { ...office, status: "available", transfer_to: canonicalName(cand), say_name: say, instruction: `Urgent caller. Tell them in Hebrew you are connecting them to ${say} right now, then transfer_call to the "${canonicalName(cand)}" destination.` };
+          }
+        }
+        return { ...office, status: "no_answer", transfer_to: null, instruction: "Urgent caller but everyone is busy right now. Apologize, say you will get someone to call back urgently, take a message (name, confirm the callback number) and mark it urgent in the reason." };
+      }
       // The server decides in one call: connect the caller to whoever is free (the
       // person asked for, or a travel fallback), or take a message. The model fires
       // this check twice, so the decision is cached briefly and a duplicate gets the
