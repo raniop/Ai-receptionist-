@@ -1113,6 +1113,21 @@ async function runMcpTool(name, a = {}) {
       const office = officeStatus();
       if (!office.office_open)
         return { ...office, status: "office_closed", transfer_to: null, instruction: "Do NOT transfer. Tell the caller the office is closed, take their details and send the staff member a message; say they will get back to the caller on the next business day." };
+      // On vacation: the person the caller asked for is away for a while. Cover with
+      // Shirel, then Eli - never route to the person on vacation.
+      const vacUntil = onVacation(agentEmail(a.agent_name));
+      if (vacUntil) {
+        const backDMY = vacUntil.split("-").reverse().join("/");
+        for (const cand of ["שיראל", "אלי"]) {
+          if (onVacation(agentEmail(cand)) || triedRecently(a.caller_phone, cand)) continue;
+          if ((await liveStatusOf(cand)) === "available") {
+            recordTransfer(a.caller_phone, a.agent_name, cand);
+            const say = sayName(cand);
+            return { ...office, status: "available", transfer_to: canonicalName(cand), say_name: say, instruction: `${sayName(a.agent_name)} is on vacation (back on ${backDMY}). Tell the caller that in Hebrew and that you are connecting them to ${say} instead, then transfer_call to the "${canonicalName(cand)}" destination.` };
+          }
+        }
+        return { ...office, status: "no_answer", transfer_to: null, instruction: `${sayName(a.agent_name)} is on vacation (back on ${backDMY}) and the cover is busy. Tell the caller ${sayName(a.agent_name)} is on vacation, apologize, and take a message (name, confirm the callback number) that someone will handle it.` };
+      }
       // URGENT caller: skip everything and connect them to the first free person.
       if (isUrgentRequest(a.agent_name)) {
         for (const cand of URGENT_CHAIN) {
