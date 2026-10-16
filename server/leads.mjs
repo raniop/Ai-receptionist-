@@ -101,7 +101,7 @@ function cookieHeader() {
 // ── request router. Returns true when it handled the request. ────────────────
 export async function handleLeadsRequest(req, res, url) {
   const p = url.pathname;
-  if (p !== "/leads" && p !== "/leads/login" && p !== "/leads/logout" && !p.startsWith("/api/leads")) return false;
+  if (p !== "/leads" && p !== "/leads/login" && p !== "/leads/logout" && p !== "/api/vacations" && !p.startsWith("/api/leads")) return false;
 
   const html = (code, body) => { res.writeHead(code, { "content-type": "text/html; charset=utf-8" }); res.end(body); };
   const json = (code, body, extra = {}) => { res.writeHead(code, { "content-type": "application/json; charset=utf-8", ...extra }); res.end(JSON.stringify(body)); };
