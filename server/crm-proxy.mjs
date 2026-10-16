@@ -30,7 +30,7 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { startQuote, answerQuote } from "./quote.mjs";
 import { officeStatus } from "./office-hours.mjs";
-import { recordLead, handleLeadsRequest } from "./leads.mjs";
+import { recordLead, handleLeadsRequest, onVacation } from "./leads.mjs";
 import nodemailer from "nodemailer";
 
 const {
@@ -714,6 +714,7 @@ async function pbxPresenceFor(name) {
 // One person's live status, assuming the office is open: "available" | "busy" | "away".
 // The PBX (on a call) wins; the desk-phone relay adds phone-side DND; then the manual toggle.
 async function liveStatusOf(name) {
+  if (onVacation(agentEmail(name))) return "away"; // on vacation -> never routed to
   const pbx = await pbxPresenceFor(name);
   const phone = presenceFor(name);
   const live = pbx === "busy" || pbx === "away" ? pbx : phone === "away" ? "away" : pbx ? null : phone;

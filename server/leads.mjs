@@ -37,6 +37,36 @@ function save() {
   }, 200);
 }
 
+// ── vacations ────────────────────────────────────────────────────────────────
+// { email: "YYYY-MM-DD" } - a staff member is treated as AWAY through that date.
+const VACATION_FILE = process.env.VACATION_FILE
+  || (fs.existsSync("/data") ? "/data/vacations.json" : fileURLToPath(new URL("./vacations.json", import.meta.url)));
+// The staff the vacation panel lists, name + email (so the board can set them).
+export const VAC_STAFF = [
+  { he: "רני", email: "rani@ophirins.co.il" }, { he: "שיראל", email: "ophir@ophirins.co.il" },
+  { he: "אלי", email: "eli@ophirins.co.il" }, { he: "הדר", email: "hadar@ophirins.co.il" },
+  { he: "סיגל", email: "sigal@ophirins.co.il" }, { he: "רונה", email: "rona@ophirins.co.il" },
+  { he: "מיטל", email: "maytal@ophirins.co.il" }, { he: "אורית אופיר", email: "orit_o@ophirins.co.il" },
+  { he: "אורית כהן", email: "orit_c@ophirins.co.il" },
+];
+let vacations = (() => { try { return JSON.parse(fs.readFileSync(VACATION_FILE, "utf8")); } catch { return {}; } })();
+function saveVac() { try { fs.writeFileSync(VACATION_FILE, JSON.stringify(vacations)); } catch (e) { console.error("[vac] save failed:", e.message); } }
+const today = () => new Date().toISOString().slice(0, 10);
+/** The vacation end date (YYYY-MM-DD) if this person is on vacation today, else null. Auto-expires. */
+export function onVacation(email) {
+  if (!email) return null;
+  const until = vacations[email];
+  if (!until) return null;
+  if (until < today()) { delete vacations[email]; saveVac(); return null; } // past -> clear
+  return until;
+}
+function setVacation(email, until) {
+  if (!email) return;
+  if (until && /^\d{4}-\d{2}-\d{2}$/.test(until)) vacations[email] = until;
+  else delete vacations[email];
+  saveVac();
+}
+
 /** Record a lead from a tool. `call` = { ext, clid, to } for click-to-call, optional. */
 export function recordLead({ caller_name, caller_phone, topic, sent_to, call }) {
   const lead = {
@@ -92,6 +122,20 @@ export async function handleLeadsRequest(req, res, url) {
   // The page itself
   if (p === "/leads" && req.method === "GET") {
     html(200, authed(req) ? DASHBOARD_HTML : LOGIN_HTML);
+    return true;
+  }
+
+  // Vacations API (requires auth)
+  if (p === "/api/vacations") {
+    if (!authed(req)) { json(401, { error: "unauthorized" }); return true; }
+    if (req.method === "GET") { json(200, { staff: VAC_STAFF, vacations }); return true; }
+    if (req.method === "POST") {
+      const body = await readBody(req);
+      setVacation(body.email, body.until || null);
+      json(200, { ok: true, vacations });
+      return true;
+    }
+    json(405, { error: "method" });
     return true;
   }
 
@@ -175,9 +219,23 @@ header a{color:#bfdbfe;font-size:13px;text-decoration:none}
 #people .chip{padding:6px 12px;font-size:12px}
 .notes{margin-top:8px;font-size:12px;color:#4b5563;background:#f9fafb;border-radius:8px;padding:6px 10px}
 .empty{text-align:center;color:#9ca3af;padding:40px}
+.vacbtn{background:#2563eb;color:#fff;border:0;border-radius:9px;padding:7px 12px;font-size:13px;font-weight:700;cursor:pointer}
+.modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;align-items:center;justify-content:center}
+.modal.on{display:flex}
+.box{background:#fff;border-radius:16px;padding:20px;width:360px;max-width:92vw;max-height:86vh;overflow:auto}
+.bx-top{display:flex;justify-content:space-between;align-items:center;font-size:17px;margin-bottom:6px}
+.bx-top .x{cursor:pointer;color:#9ca3af;font-size:18px}
+.hint{color:#6b7280;font-size:12px;line-height:1.5;margin:0 0 14px}
+.vrow{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f1f1f1}
+.vrow .nm{flex:1;font-weight:600}
+.vrow .on-vac{color:#b45309;font-size:12px;font-weight:700}
+.vrow input[type=date]{border:1px solid #d1d5db;border-radius:8px;padding:6px 8px;font-size:13px}
 @media(max-width:560px){.wrap{padding:12px}}
 </style></head><body>
-<header><h1>📋 לוח פניות — אופיר ביטוח</h1><div class="sp"></div><span id="count"></span><a href="/leads/logout">יציאה</a></header>
+<header><h1>📋 לוח פניות — אופיר ביטוח</h1><div class="sp"></div><span id="count"></span><button class="vacbtn" onclick="openVac()">🏖️ חופשות</button><a href="/leads/logout">יציאה</a></header>
+<div class="modal" id="vac"><div class="box"><div class="bx-top"><b>חופשות עובדים</b><span class="x" onclick="closeVac()">✕</span></div>
+<p class="hint">בחר תאריך חזרה לעובד בחופשה. דלית לא תעביר אליו ולא תנתב אליו עד התאריך הזה (כולל). למחיקה — נקה את התאריך.</p>
+<div id="vaclist"></div></div></div>
 <div class="bar" id="status">
   <span class="chip on" data-f="open">פתוחות</span>
   <span class="chip" data-f="new">חדשות</span>
@@ -230,5 +288,14 @@ function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'
 document.querySelectorAll('#status .chip').forEach(c=>c.onclick=()=>{document.querySelectorAll('#status .chip').forEach(x=>x.classList.remove('on'));c.classList.add('on');filter=c.dataset.f;render();});
 document.querySelectorAll('#people .chip').forEach(c=>c.onclick=()=>{document.querySelectorAll('#people .chip').forEach(x=>x.classList.remove('on'));c.classList.add('on');person=c.dataset.p;render();});
 document.getElementById('q').oninput=e=>{q=e.target.value;render();};
+async function openVac(){const r=await fetch('/api/vacations');const d=await r.json();
+const el=document.getElementById('vaclist');
+el.innerHTML=d.staff.map(s=>{const u=d.vacations[s.email]||'';
+return '<div class="vrow"><span class="nm">'+esc(s.he)+'</span>'+(u?'<span class="on-vac">עד '+u+'</span>':'')+
+'<input type="date" value="'+u+'" onchange="setVac(\\''+s.email+'\\',this.value)"></div>';}).join('');
+document.getElementById('vac').classList.add('on');}
+function closeVac(){document.getElementById('vac').classList.remove('on');}
+async function setVac(email,until){await fetch('/api/vacations',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email,until})});openVac();}
+document.getElementById('vac').onclick=e=>{if(e.target.id==='vac')closeVac();};
 load();setInterval(load,20000);
 </script></body></html>`;
