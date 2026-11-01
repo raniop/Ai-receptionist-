@@ -369,8 +369,10 @@ const STAFF = [
   { email: "orit_o@ophirins.co.il", ext: "201", did: "0732721118", aliases: ["אורית אופיר", "orit ophir", "orit ofir"] },
   { email: "orit_c@ophirins.co.il", ext: "209", did: "0732721116", aliases: ["אורית כהן", "orit cohen"] },
   { email: "rona@ophirins.co.il", ext: "208", did: "0732721102", aliases: ["רונה", "rona"] },
-  { email: "sigal@ophirins.co.il", ext: "206", did: "0732721106", aliases: ["סיגל", "sigal"] },
-  { email: "maytal@ophirins.co.il", ext: "210", did: "0732721105", aliases: ["מיטל", "מייטל", "maytal", "meital"] },
+  // Carmit handles car, home and business insurance (replaced Sigal and Maytal). She
+  // works from another location, NOT the office PBX, so she has no extension - calls
+  // are transferred straight to her (she shows as available during office hours).
+  { email: "carmit@ophirins.co.il", did: "037548008", aliases: ["כרמית", "רביע", "carmit", "rabia"] },
 ];
 // The STAFF entry a free-text name best matches, by earliest-appearing alias.
 function staffFor(name) {
@@ -730,7 +732,7 @@ const DEFAULT_PRIMARY = "rani@ophirins.co.il";
 const DEFAULT_FALLBACK = ["שיראל"];
 // For an URGENT caller ("I need someone now") we skip the questions and connect them
 // to the FIRST free person anywhere, in this priority order.
-const URGENT_CHAIN = ["רני", "שיראל", "אלי", "הדר", "סיגל", "רונה", "מיטל", "אורית אופיר", "אורית כהן"];
+const URGENT_CHAIN = ["רני", "שיראל", "אלי", "הדר", "רונה", "אורית אופיר", "אורית כהן", "כרמית"];
 function isUrgentRequest(name) {
   return /anyone|urgent|דחוף/i.test(String(name || "")) && !agentEmail(name);
 }
@@ -755,7 +757,7 @@ const AGENT_LABEL = {
   "hadar@ophirins.co.il": "Hadar Gilad", "gilad@ophirins.co.il": "Gilad Carmona",
   "ophir@ophirins.co.il": "Shirel", "orit_o@ophirins.co.il": "Orit Ophir",
   "orit_c@ophirins.co.il": "Orit Cohen", "rona@ophirins.co.il": "Rona",
-  "sigal@ophirins.co.il": "Sigal", "maytal@ophirins.co.il": "Maytal",
+  "carmit@ophirins.co.il": "Carmit",
 };
 function canonicalName(name) {
   return AGENT_LABEL[agentEmail(name)] ?? String(name || "").trim();
@@ -764,8 +766,7 @@ function canonicalName(name) {
 const AGENT_HE = {
   "rani@ophirins.co.il": "רני", "eli@ophirins.co.il": "אלי", "hadar@ophirins.co.il": "הדר",
   "gilad@ophirins.co.il": "גלעד", "ophir@ophirins.co.il": "שיראל", "orit_o@ophirins.co.il": "אורית אופיר",
-  "orit_c@ophirins.co.il": "אורית כהן", "rona@ophirins.co.il": "רונה", "sigal@ophirins.co.il": "סיגל",
-  "maytal@ophirins.co.il": "מיטל",
+  "orit_c@ophirins.co.il": "אורית כהן", "rona@ophirins.co.il": "רונה", "carmit@ophirins.co.il": "כרמית",
 };
 function sayName(name) {
   return AGENT_HE[agentEmail(name)] ?? String(name || "").trim();

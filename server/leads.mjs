@@ -45,8 +45,8 @@ const VACATION_FILE = process.env.VACATION_FILE
 export const VAC_STAFF = [
   { he: "רני", email: "rani@ophirins.co.il" }, { he: "שיראל", email: "ophir@ophirins.co.il" },
   { he: "אלי", email: "eli@ophirins.co.il" }, { he: "הדר", email: "hadar@ophirins.co.il" },
-  { he: "סיגל", email: "sigal@ophirins.co.il" }, { he: "רונה", email: "rona@ophirins.co.il" },
-  { he: "מיטל", email: "maytal@ophirins.co.il" }, { he: "אורית אופיר", email: "orit_o@ophirins.co.il" },
+  { he: "כרמית", email: "carmit@ophirins.co.il" }, { he: "רונה", email: "rona@ophirins.co.il" },
+  { he: "אורית אופיר", email: "orit_o@ophirins.co.il" },
   { he: "אורית כהן", email: "orit_c@ophirins.co.il" },
 ];
 let vacations = (() => { try { return JSON.parse(fs.readFileSync(VACATION_FILE, "utf8")); } catch { return {}; } })();
@@ -251,9 +251,8 @@ header a{color:#bfdbfe;font-size:13px;text-decoration:none}
   <span class="chip" data-p="שיראל">שיראל</span>
   <span class="chip" data-p="אלי">אלי</span>
   <span class="chip" data-p="הדר">הדר</span>
-  <span class="chip" data-p="סיגל">סיגל</span>
+  <span class="chip" data-p="כרמית">כרמית</span>
   <span class="chip" data-p="רונה">רונה</span>
-  <span class="chip" data-p="מיטל">מיטל</span>
   <span class="chip" data-p="אורית אופיר">אורית אופיר</span>
   <span class="chip" data-p="אורית כהן">אורית כהן</span>
   <span class="chip" data-p="המשרד">המשרד</span>
