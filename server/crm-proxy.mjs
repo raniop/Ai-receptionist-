@@ -1110,6 +1110,9 @@ async function runMcpTool(name, a = {}) {
       return answerQuote(a);
     case "check_agent_status": {
       a = { ...a, agent_name: routedAgent(a.agent_name) }; // a request for Gilad -> Rani
+      // An unknown name (a typo, or someone who left like Sigal/Maytal) is NOT a real
+      // transfer destination - treat it as a generic request so it goes to Rani/Shirel.
+      if (!isUrgentRequest(a.agent_name) && !agentEmail(a.agent_name)) a = { ...a, agent_name: "Rani Ophir" };
       // The office clock is decided here; the model got open/closed wrong.
       const office = officeStatus();
       if (!office.office_open)
