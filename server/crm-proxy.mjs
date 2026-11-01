@@ -372,7 +372,7 @@ const STAFF = [
   // Carmit handles car, home and business insurance (replaced Sigal and Maytal). She
   // works from another location, NOT the office PBX, so she has no extension - calls
   // are transferred straight to her (she shows as available during office hours).
-  { email: "carmit@ophirins.co.il", did: "037548008", aliases: ["כרמית", "רביע", "carmit", "rabia"] },
+  { email: "carmit@ophirins.co.il", did: "037538008", aliases: ["כרמית", "רביע", "carmit", "rabia"] },
 ];
 // The STAFF entry a free-text name best matches, by earliest-appearing alias.
 function staffFor(name) {
