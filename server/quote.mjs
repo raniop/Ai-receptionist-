@@ -328,7 +328,7 @@ const ASK = (id, n) => {
     question_id: id,
     text: x.text,
     wording: "Keep the wording, but match the grammatical gender to the caller: the text is written in masculine; for a woman say it in feminine (at mekabelt, avart, hufnet, ushpazt), for several travelers use plural.",
-    ...(x.note ? { note_if_asked: x.note } : {}),
+    ...(x.note ? { note_if_asked: x.note, note_meaning: "These are cases the caller does NOT answer 'yes' for. If the only medication/condition is on this list (e.g. blood pressure / לחץ דם), the answer is 'no'." } : {}),
     ...(id === "pregnant" ? { also_collect: "if yes: the pregnancy week, and whether it is high-risk / multiple / the doctor advised not to travel" } : {}),
     ...(n > 1 ? { ask_as: "one question for all travelers together, then note who answered yes" } : {}),
   };
@@ -350,7 +350,9 @@ export function startQuote(q, discount = null) {
     step: "Read trip_summary back to the caller and ask if it is correct. If it is wrong, start a new quote with the corrected details. If it is correct, ask ask_now EXACTLY as written. After each answer, send it with the answer tool AND, in the same turn, already ask the next question from questions_in_order (a follow-up only right after a yes to its parent), so the caller doesn't wait. If the tool's ask_now differs from what you asked, ask the tool's question instead.",
     ask_now: ASK(queue[0], travelers.length),
     questions_in_order: queue.flatMap((id) => [id, ...({ q2: ["q2_1", "q2_2"], q3: ["q3_1"] }[id] ?? [])]).map((id) => ({
-      question_id: id, text: QUESTION[id].text, ...(QUESTION[id].if ? { only_after_yes_to: QUESTION[id].if } : {}),
+      question_id: id, text: QUESTION[id].text,
+      ...(QUESTION[id].note ? { note: QUESTION[id].note, note_meaning: "This lists conditions the caller does NOT need to answer 'yes' for. If the caller's only medication/condition is on this list (e.g. blood pressure), answer this question 'no'." } : {}),
+      ...(QUESTION[id].if ? { only_after_yes_to: QUESTION[id].if } : {}),
     })),
   };
 }
